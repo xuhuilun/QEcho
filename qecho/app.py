@@ -15,7 +15,16 @@ from fastapi.staticfiles import StaticFiles
 
 from .adapters import BridgeClient, BridgeError, ModelClient, ProviderError
 from .engine import Engine
-from .schemas import ContactCreate, ContactPatch, SendInput, SettingsPatch, SimulationInput
+from .runtime import InstanceLock, protect_path
+from .schemas import (
+    AutomationStartInput,
+    ContactCreate,
+    ContactPatch,
+    SendInput,
+    SettingsPatch,
+    SimulationInput,
+)
+from .simple import SimpleService
 from .store import Store
 
 LOGGER = logging.getLogger("qecho")
@@ -37,7 +46,7 @@ def _token(directory: Path, name: str, env_name: str) -> str:
         else:
             with os.fdopen(fd, "w") as handle:
                 handle.write(secrets.token_urlsafe(32))
-    path.chmod(0o600)
+    protect_path(path, 0o600)
     value = path.read_text().strip()
     if len(value) < 16 or not value.isascii():
         raise ValueError(f"Invalid token file: {path}")
@@ -53,43 +62,41 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        # The engine's ordering and cancellation guarantees are intentionally single-process.
-        import fcntl
-
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        directory.chmod(0o700)
-        lock_file = (directory / "instance.lock").open("a+")
-        try:
-            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            lock_file.close()
-            raise RuntimeError("This QEcho data directory is already in use") from exc
+        protect_path(directory, 0o700)
+        lock = InstanceLock(directory / "instance.lock")
+        lock.acquire()
         store = None
-        model = model_client or ModelClient()
-        bridge = bridge_client or BridgeClient()
+        model = bridge = engine = None
         try:
+            model = model_client or ModelClient()
+            bridge = bridge_client or BridgeClient()
             application.state.admin_token = _token(directory, "admin-token", "QECHO_ADMIN_TOKEN")
             application.state.webhook_token = _token(
                 directory, "webhook-token", "QECHO_WEBHOOK_TOKEN"
             )
             store = Store(directory / "qecho.sqlite3")
-            (directory / "qecho.sqlite3").chmod(0o600)
+            protect_path(directory / "qecho.sqlite3", 0o600)
             application.state.store = store
             application.state.bridge = bridge
-            application.state.engine = Engine(store, model, bridge)
+            engine = Engine(store, model, bridge)
+            application.state.engine = engine
+            application.state.simple = SimpleService(store, bridge)
             LOGGER.info("QEcho ready. Admin token file: %s", directory / "admin-token")
             yield
         finally:
-            engine = getattr(application.state, "engine", None)
-            if engine and hasattr(engine, "shutdown"):
-                await engine.shutdown()
-            for client in (model, bridge):
-                if hasattr(client, "close"):
-                    await client.close()
-            if store:
-                store.close()
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
-            lock_file.close()
+            try:
+                if engine and hasattr(engine, "shutdown"):
+                    await engine.shutdown()
+                for client in (model, bridge):
+                    if client and hasattr(client, "close"):
+                        await client.close()
+            finally:
+                try:
+                    if store:
+                        store.close()
+                finally:
+                    lock.release()
 
     application = FastAPI(
         title="QEcho",
@@ -156,6 +163,32 @@ def create_app(
     @application.patch("/api/settings", dependencies=[Depends(admin)])
     async def update_settings(body: SettingsPatch):
         return application.state.store.update_settings(body.model_dump(exclude_unset=True))
+
+    @application.get("/api/setup", dependencies=[Depends(admin)])
+    async def setup():
+        # Only the authenticated owner can obtain the token needed to configure NapCat.
+        return {
+            "webhook_path": "/webhooks/onebot",
+            "webhook_token": application.state.webhook_token,
+        }
+
+    @application.get("/api/automation", dependencies=[Depends(admin)])
+    async def automation():
+        return application.state.simple.status()
+
+    @application.post("/api/qq/sync", dependencies=[Depends(admin)])
+    async def sync_qq():
+        return await application.state.simple.sync()
+
+    @application.post("/api/automation/start", dependencies=[Depends(admin)])
+    async def start_automation(body: AutomationStartInput):
+        return await application.state.simple.start(
+            body.qq_ids, body.prompt, body.expected_revision
+        )
+
+    @application.post("/api/automation/stop", dependencies=[Depends(admin)])
+    async def stop_automation():
+        return application.state.simple.stop()
 
     @application.get("/api/contacts", dependencies=[Depends(admin)])
     async def contacts():

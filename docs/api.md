@@ -2,11 +2,27 @@
 
 所有管理请求通过 `Authorization: Bearer <admin-token>` 认证，路径以 `/api` 开头。失败返回 JSON `detail`；401 为认证失败，404 为资源不存在，409 为当前状态或规则不允许操作，422 为参数校验失败，502 为外部服务失败。
 
-## 配置
+## 极简自动代聊入口
+
+下面接口均需管理令牌：
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/automation` | 返回 `running/account_id/selected_ids/paused_ids/active_count/prompt/revision/model_ready/login_url/recent`，最近最多 8 条回复状态，不返回聊天正文或密钥 |
+| `POST /api/qq/sync` | 自动识别桥接登录账号并获取好友，返回上述状态及 `friends: [{qq_id, name}]`，不自动授权 |
+| `POST /api/automation/start` | 请求 `qq_ids`、非空 `prompt`、`expected_revision`；验证实际好友列表后原子替换授权范围和统一提示词，所选好友使用自动回复模式 |
+| `POST /api/automation/stop` | 立即暂停并取消未发送任务，不等待桥接、模型或会话锁 |
+| `GET /api/setup` | 仅供已认证主人配置桥接上报，返回 `webhook_path` 与 `webhook_token`；不要分享返回值 |
+
+启动使用完整好友名单，最多 500 位，QQ 号不能重复。配置或联系人状态在异步核验期间改变，启动失败并保持暂停；更晚的人工接管不会被旧启动覆盖。已有真实 QQ 历史时不能直接换号复用。
+
+`simple_mode=true` 时统一提示词不叠加旧联系人人格/语气/资料，旧数据不删除。原有会话 API 继续保留兼容，首页以极简自动代聊为主。
+
+## 配置字段
 
 `GET /api/settings` 返回配置及 `revision`。`PATCH /api/settings` 局部更新；字段、默认值和长度约束以 `qecho/schemas.py` 为准。未知字段拒绝，省略或 null 不修改。
 
-模型字段：`model_mode`（`demo`/`live`）、`model_base_url`、`model_name`、`temperature`、`context_messages`、`max_reply_chars`。代聊字段：`enabled`、`owner_name`、`global_prompt`、`qq_self_id`、`bridge_base_url`、`reply_delay_seconds`。
+模型字段：`model_mode`（`demo`/`live`）、`model_base_url`、`model_name`、`temperature`、`context_messages`、`max_reply_chars`。代聊字段：`enabled`、`owner_name`、`global_prompt`、`qq_self_id`、`bridge_base_url`、`bridge_login_url`、`simple_mode`、`reply_delay_seconds`。极简单页通过账号同步自动填写 `qq_self_id`。
 
 `model_api_key` 与 `bridge_token` 只写；读取仅返回 `model_api_key_set`、`bridge_token_set`。提交空字符串保留已有密钥；使用 `clear_model_api_key: true` 或 `clear_bridge_token: true` 明确删除。所有配置保存增加版本并取消未发送草稿。
 
