@@ -31,21 +31,54 @@ uv --version
 
 Python 3.12 由下面的 uv 命令安装和管理，应用依赖按 `uv.lock` 安装；前端直接由后端提供，无需 Node.js 构建。
 
-### 2. 下载项目并启动
+### 2. 下载项目并安装 Python
 
 ```sh
 git clone https://github.com/xuhuilun/QEcho.git
 cd QEcho
 uv python install 3.12
+```
+
+`uv python install 3.12` 安装项目使用的 Python 3.12。后续操作均在 `QEcho` 项目目录中执行。
+
+### 3. 下载并安装 Python 依赖
+
+**先安装项目依赖，再启动 QEcho。** 在项目目录执行：
+
+```sh
 uv sync --locked
+```
+
+这条命令会创建项目专用的 `.venv` 虚拟环境，按 `uv.lock` 下载并安装所需版本的 Python 包，同时安装 QEcho 本身及启动命令。已有缓存会复用；首次安装需要网络访问包下载源。
+
+主要运行依赖如下，间接依赖也会一起安装：
+
+| Python 包 | 用途 |
+| --- | --- |
+| FastAPI | 管理接口和工作台服务 |
+| Uvicorn | 运行 QEcho HTTP 服务 |
+| HTTPX | 请求 AI 模型与 QQ 桥接接口 |
+
+`pyproject.toml` 声明依赖，`uv.lock` 锁定安装版本。默认还会安装仓库中的开发检查工具。无需逐个下载这些包，也无需手动激活 `.venv`。
+
+安装命令成功后，检查项目解释器和依赖：
+
+```sh
+uv run --no-sync python --version
+uv run --no-sync python -c "import fastapi, httpx, uvicorn, qecho; print('Python 依赖安装成功')"
+```
+
+应看到 Python `3.12.x` 和 `Python 依赖安装成功`。这里的 `--no-sync` 只检查已经安装的环境，不在检查过程中补装依赖。安装或检查报错时，先完成依赖问题排查，再进行下一步。
+
+### 4. 启动 QEcho
+
+```sh
 uv run qecho
 ```
 
-首次安装需要下载 Python 和依赖，请确保网络能访问相应下载源。后续命令均在 `QEcho` 项目目录中执行。已有项目可以直接从 `uv sync --locked` 开始。
-
 看到 `Application startup complete` 后，保持这个终端运行，在浏览器打开 <http://127.0.0.1:8765>，应显示管理令牌登录页。访问 <http://127.0.0.1:8765/healthz> 会返回 `{"status":"ok"}`。默认仅监听本机，关闭启动终端或按 `Ctrl+C` 会停止服务。
 
-### 3. 查看管理令牌并登录
+### 5. 查看管理令牌并登录
 
 另开一个终端，进入刚才克隆的 `QEcho` 目录，读取令牌：
 
@@ -57,7 +90,7 @@ cat .data/admin-token
 
 首次启动会在项目的 `.data/` 目录生成数据库、`admin-token` 管理令牌和 `webhook-token` 事件令牌。管理令牌用于登录，事件令牌用于 QQ 消息上报，两者应分别配置。`.data/` 包含配置、聊天记录和密钥，默认已被 Git 忽略，不要公开分享。
 
-### 4. 配置人格与 AI
+### 6. 配置人格与 AI
 
 新建联系人，填写 QQ 号和称呼，在右侧设置人格、关系、语气、已确认信息和补充指令并保存。“和喜欢的人聊天”等预设只是起点，所有文本均可编辑。
 
@@ -77,7 +110,7 @@ QEcho 自动在根地址后追加 `/chat/completions`，读取 `choices[0].messa
 
 如果模型也在同一台电脑上直接运行，使用模型服务实际监听的本机地址，例如 `http://127.0.0.1:模型端口/v1`，其中端口需替换为真实端口。
 
-### 5. 连接本机 QQ
+### 7. 连接本机 QQ
 
 按 [NapCat 官方安装说明](https://napneko.github.io/guide/napcat)安装桥接，并自行登录需要代聊的 QQ。QEcho 和 NapCat 分别启动，按“在同一台电脑上直接运行”配置以下两个方向：
 
@@ -97,7 +130,7 @@ NapCat 使用事件令牌对上报正文签名，QEcho 会验证签名。管理�
 
 如果 QEcho 与 NapCat 不在同一个系统网络环境，例如分别位于虚拟机、容器或不同电脑，需要把地址改为双方实际可达的地址；`127.0.0.1` 只表示各自环境自身。
 
-### 6. 验收第一段真实会话
+### 8. 验收第一段真实会话
 
 1. 在“从 QQ 导入”中选择一位测试联系人，或手动添加 QQ 号；添加和导入都不会自动授权。
 2. 保存人格和规则，开启该联系人的“允许代聊”，保持“生成草稿 · 我来确认”，确保未处于人工接管状态。
