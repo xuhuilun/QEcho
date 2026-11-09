@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#252824" />
+    <title>QEcho · 你的表达，由你决定</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div id="auth-screen" class="auth-screen" hidden>
+      <form id="auth-form" class="auth-card">
+        <div class="wordmark">
+          <span class="brand-symbol" aria-hidden="true">q</span> QEcho<span
+            class="wordmark-dot"
+            >.</span
+          >
+        </div>
+        <p class="eyebrow">YOUR WORDS, YOUR WAY</p>
+        <h1>你的表达，<br />由你决定。</h1>
+        <p class="auth-description">
+          为每一段关系，设定恰如其分的语气。<br />从一场本地演练开始。
+        </p>
+        <label for="auth-token">管理访问令牌</label>
+        <input
+          id="auth-token"
+          type="password"
+          autocomplete="current-password"
+          required
+          placeholder="粘贴你的管理令牌"
+        />
+        <p class="field-hint">
+          首次启动后，在项目的
+          <code>.data/admin-token</code>
+          文件中查看令牌。令牌仅保存在当前浏览器会话。
+        </p>
+        <p id="auth-error" class="inline-error" role="alert"></p>
+        <button id="auth-submit" class="button primary full" type="submit">
+          进入工作台 <span aria-hidden="true">↗</span>
+        </button>
+        <div class="auth-footnote">
+          <span class="status-dot"></span> 本地优先 · 联系人独立授权 · 随时接管
+        </div>
+      </form>
+      <div class="auth-art" aria-hidden="true">
+        <div class="echo-circle c1"></div>
+        <div class="echo-circle c2"></div>
+        <div class="echo-circle c3"></div>
+        <div class="auth-art-text">A little more<br />like <em>you.</em></div>
+        <span class="art-caption">QEcho / 个人代聊工作室</span>
+      </div>
+    </div>
+
+    <div id="app-shell" class="app-shell" hidden>
+      <nav class="nav-rail" aria-label="主导航">
+        <a class="rail-brand" href="#" aria-label="QEcho 首页"
+          >q<span>·</span></a
+        >
+        <div class="rail-links">
+          <button
+            class="rail-button active"
+            data-view="workspace"
+            aria-label="会话工作台"
+            title="会话工作台"
+          >
+            <span aria-hidden="true">◫</span><small>会话</small>
+          </button>
+          <button
+            class="rail-button"
+            data-view="settings"
+            aria-label="连接与设置"
+            title="连接与设置"
+          >
+            <span aria-hidden="true">⚙</span><small>设置</small>
+          </button>
+        </div>
+        <div class="rail-bottom">
+          <span class="rail-version">QE / 01</span
+          ><button
+            id="logout"
+            class="rail-button"
+            aria-label="退出工作台"
+            title="退出工作台"
+          >
+            <span aria-hidden="true">↪</span><small>退出</small>
+          </button>
+        </div>
+      </nav>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">PERSONAL CONVERSATION STUDIO</span>
+            <div class="topbar-title">
+              你的代聊工作台<span class="quiet-slash"> / </span
+              ><span id="topbar-date"></span>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <span id="global-status" class="status-pill"
+              ><span class="status-dot"></span>全部代聊已暂停</span
+            ><button id="global-toggle" class="button compact">启用代聊</button>
+          </div>
+        </header>
+
+        <section id="workspace-view" class="workspace">
+          <aside id="contact-panel" class="contact-panel" aria-label="联系人">
+            <div class="directory-heading">
+              <div>
+                <span class="eyebrow">YOUR CIRCLE</span>
+                <h2>聊天对象 <span id="contact-count">0</span></h2>
+              </div>
+              <button
+                id="add-contact"
+                class="icon-button add-button"
+                aria-label="添加联系人"
+              >
+                ＋
+              </button>
+            </div>
+            <div class="search-wrap">
+              <span aria-hidden="true">⌕</span
+              ><input
+                id="contact-search"
+                type="search"
+                placeholder="搜索姓名或 QQ"
+                aria-label="搜索联系人"
+              />
+            </div>
+            <div class="directory-tabs">
+              <span class="active">全部联系人</span
+              ><button id="import-friends">从 QQ 导入 ↗</button>
+            </div>
+            <div id="contact-list" class="contact-list"></div>
+            <div class="directory-note">
+              <span class="tiny-mark" aria-hidden="true">↳</span>
+              <p>只有你明确授权的联系人，<br />才会进入真实代聊。</p>
+            </div>
+          </aside>
+
+          <main class="conversation-panel">
+            <div id="conversation-empty" class="empty-state welcome-state">
+              <span class="large-quote" aria-hidden="true">“</span>
+              <p class="eyebrow">MAKE EVERY CONVERSATION YOURS</p>
+              <h1>把想说的话，<br />交给更懂你的回声。</h1>
+              <p>添加一位联系人，定义表达方式，<br />先试着聊一聊。</p>
+              <button id="empty-add-contact" class="button primary">
+                添加第一位联系人 <span aria-hidden="true">＋</span>
+              </button>
+              <div class="welcome-lines">
+                <span>01 选定对象</span><span>02 设定人格</span
+                ><span>03 本地演练</span>
+              </div>
+            </div>
+            <div id="conversation-content" class="conversation-content" hidden>
+              <div class="conversation-heading">
+                <button
+                  id="show-contacts"
+                  class="icon-button mobile-only"
+                  aria-label="展开联系人"
+                >
+                  ☰
+                </button>
+                <div id="conversation-avatar" class="avatar large"></div>
+                <div class="conversation-person">
+                  <h2 id="conversation-name"></h2>
+                  <p id="conversation-subtitle"></p>
+                </div>
+                <div class="conversation-controls">
+                  <button id="takeover" class="button compact">人工接管</button
+                  ><button
+                    id="show-persona"
+                    class="button compact mobile-persona"
+                  >
+                    人格设置</button
+                  ><button
+                    id="preview-prompt"
+                    class="icon-button"
+                    aria-label="预览模型上下文"
+                    title="预览模型上下文"
+                  >
+                    ⌘</button
+                  ><button
+                    id="clear-messages"
+                    class="icon-button muted"
+                    aria-label="清空聊天记录"
+                    title="清空聊天记录"
+                  >
+                    ⌫
+                  </button>
+                </div>
+              </div>
+              <div
+                class="conversation-tabs"
+                role="tablist"
+                aria-label="会话类型"
+              >
+                <button
+                  id="tab-simulator"
+                  class="conversation-tab active"
+                  role="tab"
+                  aria-selected="true"
+                  data-source="simulator"
+                >
+                  本地演练 <span>PLAYGROUND</span></button
+                ><button
+                  id="tab-qq"
+                  class="conversation-tab"
+                  role="tab"
+                  aria-selected="false"
+                  data-source="qq"
+                >
+                  QQ 会话</button
+                ><span id="model-badge" class="model-badge">演练模型</span>
+              </div>
+              <div id="conversation-notice" class="conversation-notice">
+                <span aria-hidden="true">◌</span
+                ><span>演练消息只保存在本地，不会发送给 QQ 联系人。</span>
+              </div>
+              <div
+                id="messages"
+                class="messages"
+                aria-label="聊天记录"
+                aria-live="polite"
+              ></div>
+              <form id="simulate-form" class="composer">
+                <label class="sr-only" for="simulate-text"
+                  >输入一条对方的消息</label
+                ><textarea
+                  id="simulate-text"
+                  rows="2"
+                  placeholder="假如对方说：「今天过得怎么样？」"
+                  maxlength="8000"
+                  required
+                ></textarea>
+                <div class="composer-footer">
+                  <span>模拟对方的消息，看看 QEcho 会怎么回。</span
+                  ><button
+                    id="simulate-submit"
+                    class="button primary compact"
+                    type="submit"
+                  >
+                    开始演练 <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </form>
+              <div id="qq-footer" class="qq-footer" hidden>
+                真实消息由 QQ 桥接接入。草稿可编辑后确认发送。
+              </div>
+            </div>
+          </main>
+
+          <aside
+            id="persona-panel"
+            class="persona-panel"
+            aria-label="人格与代聊规则"
+          >
+            <div class="persona-heading">
+              <div>
+                <span class="eyebrow">DESIGNED BY YOU</span>
+                <h2>人格与规则</h2>
+              </div>
+              <button
+                id="close-persona"
+                class="icon-button mobile-persona"
+                aria-label="关闭人格面板"
+              >
+                ×</button
+              ><span class="editor-mark" aria-hidden="true">✎</span>
+            </div>
+            <div id="persona-empty" class="persona-empty">
+              选中联系人后，<br />在这里定义专属的表达方式。
+            </div>
+            <form id="persona-form" class="persona-form" hidden>
+              <div class="profile-section">
+                <label for="contact-name">显示名称</label
+                ><input
+                  id="contact-name"
+                  name="name"
+                  required
+                  maxlength="100"
+                />
+                <p id="contact-qq" class="field-hint"></p>
+                <label class="toggle-row"
+                  ><span
+                    ><strong>允许代聊</strong
+                    ><small>仅授权当前联系人</small></span
+                  ><input
+                    id="contact-enabled"
+                    name="enabled"
+                    type="checkbox"
+                    role="switch" /><span class="toggle-track"></span></label
+                ><label for="contact-mode">回复方式</label
+                ><select id="contact-mode" name="mode">
+                  <option value="draft">生成草稿 · 我来确认</option>
+                  <option value="auto">自动发送 · 按我的规则</option>
+                </select>
+                <p class="field-hint">全局暂停或人工接管时，真实发送会停止。</p>
+              </div>
+              <div class="profile-section">
+                <div class="section-label">
+                  <label for="persona-preset">从一个起点开始</label
+                  ><span>可自由修改</span>
+                </div>
+                <div class="preset-row">
+                  <select id="persona-preset">
+                    <option value="daily">自然日常</option>
+                    <option value="crush">和喜欢的人聊天</option>
+                    <option value="concise">简洁事务</option></select
+                  ><button
+                    id="apply-preset"
+                    class="button compact"
+                    type="button"
+                  >
+                    应用
+                  </button>
+                </div>
+              </div>
+              <div class="profile-section">
+                <label for="contact-relationship">你们的关系</label
+                ><input
+                  id="contact-relationship"
+                  name="relationship"
+                  placeholder="例如：认识不久，正在慢慢了解"
+                  maxlength="2000"
+                /><label for="contact-persona">人格设定</label
+                ><textarea
+                  id="contact-persona"
+                  name="persona"
+                  rows="4"
+                  placeholder="希望呈现怎样的性格、态度和表达习惯？"
+                ></textarea
+                ><label for="contact-tone">语气与风格</label
+                ><textarea
+                  id="contact-tone"
+                  name="tone"
+                  rows="3"
+                  placeholder="例如：轻松温柔，偶尔开玩笑，回复短一点。"
+                ></textarea>
+              </div>
+              <div class="profile-section">
+                <label for="contact-facts">已确认的信息</label
+                ><textarea
+                  id="contact-facts"
+                  name="facts"
+                  rows="3"
+                  placeholder="让 QEcho 确实知道的事，例如你的爱好、称呼和共同话题。"
+                ></textarea
+                ><label for="contact-instructions">补充指令</label
+                ><textarea
+                  id="contact-instructions"
+                  name="instructions"
+                  rows="4"
+                  placeholder="例如：少用表情，不要连续追问；不知道我的安排时先问我。"
+                ></textarea>
+              </div>
+              <div class="persona-footer">
+                <span id="persona-save-state">所有变化，由你保存</span
+                ><button
+                  id="save-persona"
+                  class="button primary full"
+                  type="submit"
+                >
+                  保存人格与规则</button
+                ><button
+                  id="preview-prompt-mobile"
+                  class="text-button mobile-persona"
+                  type="button"
+                >
+                  预览已保存的模型上下文</button
+                ><button
+                  id="delete-contact"
+                  class="text-button danger"
+                  type="button"
+                >
+                  删除此联系人
+                </button>
+              </div>
+            </form>
+          </aside>
+        </section>
+
+        <main id="settings-view" class="settings-view" hidden>
+          <div class="settings-intro">
+            <p class="eyebrow">THE WAY IT WORKS</p>
+            <h1>连接你的世界。</h1>
+            <p>配置模型和 QQ 桥接，再决定 QEcho 如何替你表达。</p>
+          </div>
+          <form id="settings-form" class="settings-form">
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <span>01</span>
+                <div>
+                  <h2>你的表达底色</h2>
+                  <p>联系人设定会补充到这份全局提示词中。</p>
+                </div>
+              </div>
+              <div class="settings-fields">
+                <label for="owner-name">主人的称呼</label
+                ><input
+                  id="owner-name"
+                  name="owner_name"
+                  placeholder="QEcho 应如何称呼你"
+                /><label for="global-prompt">全局基础提示词</label
+                ><textarea
+                  id="global-prompt"
+                  name="global_prompt"
+                  rows="7"
+                  placeholder="填写希望 QEcho 遵循的基础表达规则。"
+                ></textarea>
+              </div>
+            </section>
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <span>02</span>
+                <div>
+                  <h2>回复模型</h2>
+                  <p>先用演练模型体验流程，再连接真实模型。</p>
+                </div>
+              </div>
+              <div class="settings-fields">
+                <label for="model-mode">模型模式</label
+                ><select id="model-mode" name="model_mode">
+                  <option value="demo">演练模型 · 无需密钥，不自动发 QQ</option>
+                  <option value="live">真实模型 · 使用下方接口</option></select
+                ><label for="model-base-url">模型接口地址</label
+                ><input
+                  id="model-base-url"
+                  name="model_base_url"
+                  type="url"
+                  placeholder="https://your-provider.example/v1"
+                /><label for="model-name">模型名称</label
+                ><input
+                  id="model-name"
+                  name="model_name"
+                  placeholder="填写服务商提供的模型名称"
+                /><label for="model-api-key"
+                  >API Key
+                  <span id="model-key-state" class="field-badge"
+                    >未设置</span
+                  ></label
+                ><input
+                  id="model-api-key"
+                  name="model_api_key"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="留空保留已有密钥"
+                /><label class="check-row"
+                  ><input
+                    id="clear-model-key"
+                    type="checkbox"
+                  />删除已保存的模型密钥</label
+                >
+                <div class="field-grid three">
+                  <div>
+                    <label for="temperature">温度</label
+                    ><input
+                      id="temperature"
+                      name="temperature"
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                    />
+                  </div>
+                  <div>
+                    <label for="context-messages">上下文条数</label
+                    ><input
+                      id="context-messages"
+                      name="context_messages"
+                      type="number"
+                      min="2"
+                      max="100"
+                      step="1"
+                    />
+                  </div>
+                  <div>
+                    <label for="max-reply-chars">回复字数上限</label
+                    ><input
+                      id="max-reply-chars"
+                      name="max_reply_chars"
+                      type="number"
+                      min="20"
+                      max="10000"
+                      step="1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <span>03</span>
+                <div>
+                  <h2>QQ 连接</h2>
+                  <p>连接已登录的 NapCat / OneBot 11 桥接。</p>
+                </div>
+              </div>
+              <div class="settings-fields">
+                <label for="qq-self-id">当前登录的 QQ 号</label
+                ><input
+                  id="qq-self-id"
+                  name="qq_self_id"
+                  inputmode="numeric"
+                  placeholder="用于校验消息所属账号"
+                /><label for="bridge-base-url">桥接 HTTP Server 地址</label
+                ><input
+                  id="bridge-base-url"
+                  name="bridge_base_url"
+                  type="url"
+                  placeholder="http://127.0.0.1:3000"
+                /><label for="bridge-token"
+                  >桥接访问令牌
+                  <span id="bridge-key-state" class="field-badge"
+                    >未设置</span
+                  ></label
+                ><input
+                  id="bridge-token"
+                  name="bridge_token"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="填写桥接 HTTP Server 的 token"
+                /><label class="check-row"
+                  ><input
+                    id="clear-bridge-token"
+                    type="checkbox"
+                  />删除已保存的桥接令牌</label
+                ><label for="reply-delay">自动回复等待（秒）</label
+                ><input
+                  id="reply-delay"
+                  name="reply_delay_seconds"
+                  type="number"
+                  min="0"
+                  max="60"
+                  step="0.5"
+                />
+                <div class="connection-note">
+                  <strong>消息上报地址</strong><code id="webhook-url"></code>
+                  <p>
+                    在桥接 HTTP Client
+                    中配置此地址，并设置独立的事件令牌。默认文件为
+                    <code>.data/webhook-token</code
+                    >。桥接服务令牌与事件令牌分别配置。
+                  </p>
+                </div>
+              </div>
+            </section>
+            <div class="settings-save-bar">
+              <p>密钥只写入本地，保存后不会回显。</p>
+              <button id="save-settings" class="button primary" type="submit">
+                保存全部设置 <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+          </form>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="contact-dialog" class="modal">
+      <form id="new-contact-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">ADD SOMEONE</p>
+            <h2>添加聊天对象</h2>
+          </div>
+          <button
+            class="icon-button"
+            data-close-dialog
+            type="button"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </div>
+        <p class="modal-description">
+          先建立专属人格，再由你决定是否授权代聊。
+        </p>
+        <label for="new-contact-name">显示名称</label
+        ><input
+          id="new-contact-name"
+          required
+          maxlength="100"
+          placeholder="怎么称呼这位联系人"
+        /><label for="new-contact-qq">QQ 号</label
+        ><input
+          id="new-contact-qq"
+          required
+          inputmode="numeric"
+          pattern="[0-9]+"
+          placeholder="填写对方的 QQ 号"
+        />
+        <div class="modal-note">新联系人默认未授权，回复方式为草稿。</div>
+        <button id="create-contact" class="button primary full" type="submit">
+          添加联系人
+        </button>
+      </form>
+    </dialog>
+    <dialog id="prompt-dialog" class="modal prompt-modal">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">BEHIND THE REPLY</p>
+          <h2>模型上下文预览</h2>
+        </div>
+        <button
+          class="icon-button"
+          data-close-dialog
+          type="button"
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      </div>
+      <p class="modal-description">
+        展示已保存的人格规则与真实 QQ 会话上下文；演练记录与真实会话隔离。
+      </p>
+      <div id="prompt-content" class="prompt-content"></div>
+    </dialog>
+    <dialog id="friends-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">FROM YOUR QQ</p>
+          <h2>选择要添加的好友</h2>
+        </div>
+        <button
+          class="icon-button"
+          data-close-dialog
+          type="button"
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      </div>
+      <p class="modal-description">
+        添加不会自动授权代聊，你可以随后单独设置。
+      </p>
+      <div id="friends-list" class="friends-list"></div>
+    </dialog>
+    <div
+      id="toast-region"
+      class="toast-region"
+      aria-live="polite"
+      aria-atomic="false"
+    ></div>
+  </body>
+</html>
