@@ -2,14 +2,19 @@
 
 ## 本机部署
 
-支持 Python 3.12+ 的 macOS / Linux。当前架构使用单进程会话锁，同一数据目录会通过操作系统文件锁拒绝第二个实例。不要使用多 worker 或同时运行多个实例处理同一 QQ 账号。
+默认采用 Python 3.12 + uv 源码本地运行，完整环境安装、登录、AI 配置和 QQ 验收步骤见 [README 本地部署](../README.md#本地部署)。支持 macOS / Linux；Windows 原生启动尚未支持。当前架构使用单进程会话锁，同一数据目录会通过操作系统文件锁拒绝第二个实例。不要使用多 worker 或同时运行多个实例处理同一 QQ 账号。
 
 ```sh
+git clone https://github.com/xuhuilun/QEcho.git
+cd QEcho
+uv python install 3.12
 uv sync --locked
 uv run qecho
 ```
 
-默认地址 `http://127.0.0.1:8765`。首次启动后，读取 `.data/admin-token` 并在页面登录；不要把令牌放在页面 URL 中。终端启动日志不会输出令牌内容。默认配置是全局暂停、演练模型、联系人未授权。
+默认地址 `http://127.0.0.1:8765`。等待 `Application startup complete` 后，在另一个终端进入项目目录读取 `.data/admin-token` 并在页面登录；不要把令牌放在页面 URL 中。默认数据保存在宿主机项目的 `.data/`。终端启动日志不会输出令牌内容。默认配置是全局暂停、演练模型、联系人未授权。服务运行时保持启动终端打开，按 `Ctrl+C` 停止；再次执行启动命令恢复。
+
+QEcho 与模型、NapCat 都在同一台电脑的同一系统环境直接运行时，使用各自的本机监听地址。NapCat 默认示例为 `http://127.0.0.1:3000`，事件上报地址为 `http://127.0.0.1:8765/webhooks/onebot`。跨主机、虚拟机或容器时需调整为实际可达地址。
 
 可通过环境变量覆盖：
 
@@ -23,9 +28,11 @@ uv run qecho
 
 如使用 `.env`：复制 `.env.example`，修改后运行 `uv run --env-file .env qecho`。普通 `uv run qecho` 不自动加载 `.env`。覆盖令牌时使用至少 16 个 ASCII 字符的随机值，管理令牌与事件令牌应不同。环境变量覆盖不会改写旧令牌文件，以当前环境变量为准。
 
+例如将 `.env` 的 `QECHO_PORT` 改为 `8766` 后，浏览器与 NapCat 事件上报地址都需改用 `8766`。AI、QQ 和联系人的日常配置仍在工作台保存。
+
 ## Docker
 
-从仓库根目录执行以下命令；Docker 和 Compose 服务需要已安装并启动。完整的环境准备、首次登录和 QQ 验收步骤见 [README 本地部署](../README.md#本地部署)。
+容器路线保留为附录，尚未完成实际运行验收。以下命令从仓库根目录执行，要求 Docker 和 Compose 服务已安装并启动。默认本地部署使用前述源码流程；AI 和联系人配置操作见 README。
 
 ```sh
 docker compose up -d --build
