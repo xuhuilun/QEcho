@@ -113,15 +113,21 @@ class Engine:
         settings = self.store.get_settings()
         contact = self.store.get_contact(contact_id)
         details = [settings["global_prompt"]]
-        for label, value in (
+        attributes = [
             ("主人称呼", settings["owner_name"]),
             ("当前联系人", contact["name"]),
-            ("人格设定", contact["persona"]),
-            ("语气偏好", contact["tone"]),
-            ("双方关系", contact["relationship"]),
-            ("已确认事实", contact["facts"]),
-            ("主人补充指令", contact["instructions"]),
-        ):
+        ]
+        if not settings["simple_mode"]:
+            attributes.extend(
+                [
+                    ("人格设定", contact["persona"]),
+                    ("语气偏好", contact["tone"]),
+                    ("双方关系", contact["relationship"]),
+                    ("已确认事实", contact["facts"]),
+                    ("主人补充指令", contact["instructions"]),
+                ]
+            )
+        for label, value in attributes:
             if value:
                 details.append(f"【{label}】\n{value}")
         details.append(f"本轮最多输出 {settings['max_reply_chars']} 个字符。")
@@ -227,8 +233,22 @@ class Engine:
                     self.store.get_secret("model_api_key"),
                 )
             except ProviderError as exc:
+                current = self.store.get_message(outgoing["id"])
+                if current["status"] != "generating" or not self._allowed(
+                    outgoing, simulation=simulation
+                ):
+                    return self.store.update_message(
+                        outgoing["id"], status="cancelled", error="生成期间配置或接管状态已变化"
+                    )
                 self.store.update_message(message_id, status="processed")
                 return self.store.update_message(outgoing["id"], status="error", error=str(exc))
+            current = self.store.get_message(outgoing["id"])
+            if current["status"] != "generating" or not self._allowed(
+                outgoing, simulation=simulation
+            ):
+                return self.store.update_message(
+                    outgoing["id"], status="cancelled", error="生成期间配置或接管状态已变化"
+                )
             text = text.strip()
             if not text or len(text) > settings["max_reply_chars"]:
                 self.store.update_message(message_id, status="processed")
@@ -236,14 +256,6 @@ class Engine:
                     outgoing["id"],
                     status="error",
                     error="模型回复为空或超过长度限制，请调整提示词后重新演练",
-                )
-            current = self.store.get_message(outgoing["id"])
-            if current["status"] != "generating" or not self._allowed(
-                outgoing, simulation=simulation
-            ):
-                self.store.update_message(message_id, status="processed")
-                return self.store.update_message(
-                    outgoing["id"], status="cancelled", error="生成期间配置或接管状态已变化"
                 )
             result = self.store.update_message(outgoing["id"], content=text, status="draft")
             self.store.update_message(message_id, status="processed")

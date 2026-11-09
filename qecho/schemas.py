@@ -1,6 +1,7 @@
 """Validated owner configuration. Chat messages cannot modify these values."""
 
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -23,6 +24,8 @@ DEFAULT_SETTINGS = {
     "max_reply_chars": 800,
     "qq_self_id": "",
     "bridge_base_url": "http://127.0.0.1:3000",
+    "bridge_login_url": "http://127.0.0.1:6099/webui/qq_login",
+    "simple_mode": False,
     "reply_delay_seconds": 2.0,
     "revision": 1,
 }
@@ -56,12 +59,28 @@ class SettingsPatch(InputModel):
     max_reply_chars: int | None = Field(default=None, ge=20, le=10000)
     qq_self_id: str | None = Field(default=None, max_length=20)
     bridge_base_url: str | None = Field(default=None, max_length=2000)
+    bridge_login_url: str | None = Field(default=None, max_length=2000)
+    simple_mode: bool | None = None
     reply_delay_seconds: float | None = Field(default=None, ge=0, le=60)
 
     @field_validator("qq_self_id")
     @classmethod
     def qq_account(cls, value):
         return validate_qq(value, allow_empty=True) if value is not None else value
+
+    @field_validator("bridge_login_url")
+    @classmethod
+    def qq_login_page(cls, value):
+        if value is not None:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or any(c.isspace() for c in value)
+            ):
+                raise ValueError("QQ 登录页必须是有效的 HTTP 或 HTTPS 地址")
+            parsed.port
+        return value
 
 
 class ContactCreate(InputModel):
@@ -106,3 +125,17 @@ class SimulationInput(InputModel):
 
 class SendInput(InputModel):
     content: str | None = Field(default=None, min_length=1, max_length=10000)
+
+
+class AutomationStartInput(InputModel):
+    qq_ids: list[str] = Field(min_length=1, max_length=500)
+    prompt: str = Field(min_length=1, max_length=20000)
+    expected_revision: int = Field(ge=1, strict=True)
+
+    @field_validator("qq_ids")
+    @classmethod
+    def selected_friends(cls, values):
+        normalized = [validate_qq(value.strip()) for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("好友选择不能重复")
+        return normalized

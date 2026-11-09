@@ -1,13 +1,13 @@
 """Small single-process SQLite store with transactional permission revisions."""
 
 import json
-import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from .runtime import protect_path
 from .schemas import DEFAULT_SETTINGS, ContactCreate, ContactPatch, SettingsPatch
 
 
@@ -60,7 +60,7 @@ class Store:
                 "UPDATE messages SET status='cancelled', error='服务重启，未完成任务已取消' WHERE status IN ('generating','received','processing')"
             )
         if self.path != ":memory:":
-            os.chmod(self.path, 0o600)
+            protect_path(self.path, 0o600)
 
     def close(self):
         with self._lock:
@@ -114,6 +114,14 @@ class Store:
                 json.loads(r[0])
                 for r in self.db.execute("SELECT data FROM contacts ORDER BY rowid")
             ]
+
+    def contact_revisions(self):
+        """Read the complete contact set without opening or committing a transaction."""
+        with self._lock:
+            return {
+                row[0]: json.loads(row[1])["revision"]
+                for row in self.db.execute("SELECT id,data FROM contacts")
+            }
 
     def get_contact(self, contact_id):
         with self._lock:
@@ -311,3 +319,126 @@ class Store:
                 "UPDATE messages SET status='cancelled',error='主人要求重新生成' WHERE parent_id=? AND status IN ('draft','generating')",
                 (incoming_id,),
             )
+
+    def recent_replies(self, limit=8):
+        """A bounded status summary deliberately excludes content and credentials."""
+        with self._lock:
+            rows = self.db.execute(
+                """SELECT contacts.data, messages.status, messages.error, messages.created_at
+                FROM messages JOIN contacts ON contacts.id=messages.contact_id
+                WHERE messages.direction='outgoing' AND messages.source='qq'
+                ORDER BY messages.seq DESC LIMIT ?""",
+                (min(max(int(limit), 0), 8),),
+            ).fetchall()
+            return [
+                {
+                    "contact_name": json.loads(row[0])["name"],
+                    "status": row[1],
+                    "error": row[2],
+                    "created_at": row[3],
+                }
+                for row in rows
+            ]
+
+    def pause_automation(self, expected_revision=None):
+        """Commit a stop barrier without waiting for a model or a conversation lock."""
+        with self._lock, self.db:
+            settings = DEFAULT_SETTINGS | json.loads(
+                self.db.execute("SELECT data FROM settings WHERE id=1").fetchone()[0]
+            )
+            if expected_revision is not None and settings["revision"] != expected_revision:
+                raise ValueError("配置已变化，请刷新后重新开始")
+            settings.update(enabled=False, revision=settings["revision"] + 1)
+            self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
+            self.db.execute(
+                "UPDATE messages SET status='cancelled',error='自动回复已停止或正在重新配置' WHERE status IN ('received','processing','generating','draft')"
+            )
+        return self.get_settings()
+
+    def sync_account(self, account_id, expected_revision, *, expected_contacts=None):
+        """Bind a discovered account; switching with QQ history is forbidden."""
+        account_id = SettingsPatch(qq_self_id=account_id).qq_self_id
+        blocked = False
+        with self._lock, self.db:
+            settings = DEFAULT_SETTINGS | json.loads(
+                self.db.execute("SELECT data FROM settings WHERE id=1").fetchone()[0]
+            )
+            if settings["revision"] != expected_revision:
+                raise ValueError("连接配置已变化，请重新同步好友")
+            if expected_contacts is not None and self.contact_revisions() != expected_contacts:
+                raise ValueError("联系人权限或接管状态已变化，请刷新后重新开始")
+            if settings["qq_self_id"] != account_id:
+                blocked = bool(
+                    self.db.execute("SELECT 1 FROM messages WHERE source='qq' LIMIT 1").fetchone()
+                )
+                settings.update(enabled=False, revision=settings["revision"] + 1)
+                if not blocked:
+                    settings["qq_self_id"] = account_id
+                    # A newly connected account must not inherit the previous selection.
+                    for row in self.db.execute("SELECT id,data FROM contacts").fetchall():
+                        contact = json.loads(row[1])
+                        contact.update(enabled=False, revision=contact["revision"] + 1)
+                        self.db.execute(
+                            "UPDATE contacts SET data=? WHERE id=?", (json.dumps(contact), row[0])
+                        )
+                self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
+                self.db.execute(
+                    "UPDATE messages SET status='cancelled',error='连接 QQ 账号已变化' WHERE status IN ('received','processing','generating','draft')"
+                )
+        if blocked:
+            # Raise after committing the stop barrier, rather than rolling it back.
+            raise ValueError(
+                "检测到登录 QQ 已换号，自动回复已停止；请为新账号使用独立数据目录，避免混用原账号历史"
+            )
+        return self.get_settings()
+
+    def activate_automation(
+        self, account_id, friends, prompt, expected_revision, *, expected_contacts
+    ):
+        """Replace the entire authorization set and prompt in one transaction."""
+        selected = {friend["qq_id"]: friend["name"] for friend in friends}
+        with self._lock, self.db:
+            settings = DEFAULT_SETTINGS | json.loads(
+                self.db.execute("SELECT data FROM settings WHERE id=1").fetchone()[0]
+            )
+            if settings["revision"] != expected_revision:
+                raise ValueError("配置或停止状态已变化，请刷新后重新开始")
+            if self.contact_revisions() != expected_contacts:
+                raise ValueError("联系人权限或接管状态已变化，请刷新后重新开始")
+            if (
+                settings["qq_self_id"] != account_id
+                and self.db.execute("SELECT 1 FROM messages WHERE source='qq' LIMIT 1").fetchone()
+            ):
+                raise ValueError("登录 QQ 已换号，请为新账号使用独立数据目录")
+            existing = set()
+            for row in self.db.execute("SELECT id,qq_id,data FROM contacts").fetchall():
+                contact = json.loads(row[2])
+                enabled = row[1] in selected
+                contact.update(enabled=enabled, revision=contact["revision"] + 1)
+                if enabled:
+                    contact.update(name=selected[row[1]], mode="auto", paused=False)
+                    existing.add(row[1])
+                self.db.execute(
+                    "UPDATE contacts SET data=? WHERE id=?", (json.dumps(contact), row[0])
+                )
+            for qq_id in selected.keys() - existing:
+                contact = ContactCreate(
+                    qq_id=qq_id, name=selected[qq_id], enabled=True, mode="auto"
+                ).model_dump()
+                contact.update(id=str(uuid4()), revision=1, created_at=now())
+                self.db.execute(
+                    "INSERT INTO contacts VALUES (?,?,?)",
+                    (contact["id"], qq_id, json.dumps(contact)),
+                )
+            settings.update(
+                qq_self_id=account_id,
+                global_prompt=prompt,
+                simple_mode=True,
+                enabled=True,
+                revision=settings["revision"] + 1,
+            )
+            self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
+            self.db.execute(
+                "UPDATE messages SET status='cancelled',error='好友范围或统一提示词已更新' WHERE status IN ('received','processing','generating','draft')"
+            )
+        return self.get_settings()
