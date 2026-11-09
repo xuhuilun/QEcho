@@ -1,0 +1,14 @@
+.venv/
+.data/
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.sqlite3*
+dist/
+.DS_Store
+playwright-report/
+test-results/
