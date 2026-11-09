@@ -10,7 +10,7 @@ QEcho 是一个本地运行的 QQ 代聊 Agent。你决定回复哪些好友，�
 
 ## 本地部署
 
-采用 Python 3.12 + uv 源码运行。应用已加入 Windows / macOS / Linux 的平台处理，自动化测试范围见[验证记录](docs/validation.md)。QQ 登录由外置 NapCat 提供，按其支持的平台安装；一个 QEcho 数据目录对应一个 QQ 账号。
+采用 Python 3.12 + uv 源码运行。Windows / Linux 的依赖安装和自动化测试已通过 CI，macOS 已完成本地验收，具体范围见[验证记录](docs/validation.md)。QQ 登录由外置 NapCat 提供，按其支持的平台安装；一个 QEcho 数据目录对应一个 QQ 账号。
 
 ### 1. 安装 Git 和 uv
 

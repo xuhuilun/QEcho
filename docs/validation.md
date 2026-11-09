@@ -4,7 +4,7 @@
 
 ## 极简单页与跨平台专项验收
 
-2026-11-09，本机 macOS ARM64 执行完整回归：`uv run pytest -q` 为 **150 passed, 1 skipped**；跳过的是 Windows 专属权限分支。Ruff、JavaScript 语法与页面 ID 交叉检查通过。CI 已配置 Windows / Ubuntu 矩阵，实际运行结果以 GitHub Actions 为准。
+2026-11-09，本机 macOS ARM64 执行完整回归：`uv run pytest -q` 为 **150 passed, 1 skipped**；跳过的是 Windows 专属权限分支。Ruff、JavaScript 语法与页面 ID 交叉检查通过。[功能提交 89ae796 的 Windows / Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42613651773)均成功，包含 Python 3.12 依赖安装、完整测试、跨进程锁和前端语法检查；真实 QQ 登录/收发不在 CI 范围内。
 
 新增覆盖包括：QQ 账号和好友自动同步、服务端真实好友范围校验、原子授权范围替换、统一提示词隔离旧人格、验证失败保持停止、旧账号历史保护、停止与启动异步竞态、启动期间新增/删除/重建/接管联系人的版本冲突、跨进程实例锁争用、显式释放及异常退出恢复。
 
