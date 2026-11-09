@@ -8,7 +8,18 @@
 git clone https://github.com/xuhuilun/QEcho.git
 cd QEcho
 uv python install 3.12
+```
+
+先下载并安装项目的 Python 依赖：
+
+```sh
 uv sync --locked
+uv run --no-sync python -c "import fastapi, httpx, uvicorn, qecho; print('Python 依赖安装成功')"
+```
+
+`uv sync --locked` 会创建或同步项目 `.venv`，按锁定版本安装 FastAPI、Uvicorn、HTTPX 及间接依赖，并安装 QEcho 和启动命令。当前配置默认包含开发依赖。检查输出 `Python 依赖安装成功` 后，再启动服务；无需手动激活虚拟环境：
+
+```sh
 uv run qecho
 ```
 
