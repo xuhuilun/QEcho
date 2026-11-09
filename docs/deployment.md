@@ -25,12 +25,24 @@ uv run qecho
 
 ## Docker
 
+从仓库根目录执行以下命令；Docker 和 Compose 服务需要已安装并启动。完整的环境准备、首次登录和 QQ 验收步骤见 [README 本地部署](../README.md#本地部署)。
+
 ```sh
 docker compose up -d --build
+docker compose logs --tail=50 qecho
+```
+
+等待日志出现 `Application startup complete`，再读取管理令牌并在浏览器打开 `http://127.0.0.1:8765` 登录：
+
+```sh
 docker compose exec qecho cat /app/.data/admin-token
 ```
 
 Compose 仅向宿主机回环地址发布 8765 端口，持久化到命名卷。容器以非 root 用户运行。NapCat 在宿主机时，QEcho 中桥接地址使用 `http://host.docker.internal:3000`，同时确保 NapCat 的监听地址可被容器访问；NapCat 上报地址使用宿主机的 `http://127.0.0.1:8765/webhooks/onebot`。NapCat 也在容器时应把两个服务接入同一专用网络，使用服务名访问，回环地址不跨容器。
+
+Docker 数据目录为容器内的 `/app/.data`，不能通过读取宿主项目的 `.data/` 获取令牌。事件令牌通过 `docker compose exec qecho cat /app/.data/webhook-token` 读取。当前 Compose 不含 `env_file` 或 `environment` 配置，项目 `.env` 中的 `QECHO_*` 不会自动传入容器；默认通过控制台保存模型和 QQ 设置。如需覆盖容器环境，需明确修改 Compose 中的服务环境配置。
+
+普通 `docker compose down` 保留命名卷；附加 `-v` 会删除卷中的配置和聊天数据。升级前在页面暂停，再执行 `docker compose stop qecho`；可用 `docker compose cp qecho:/app/.data ../qecho-backup` 把完整数据目录复制到仓库外，每次使用新的备份目录并妥善保管其中的密钥。随后执行 `git pull --ff-only` 和 `docker compose up -d --build`。
 
 Docker 构建定义已提供；本次交付未运行 Docker 容器验收。本机 `uv.lock` 锁定开发与运行环境，Docker 镜像当前使用 `pyproject.toml` 的依赖版本范围安装，构建时会解析兼容版本。
 
