@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .adapters import BridgeClient, BridgeError, ModelClient, ProviderError
+from .config import FileConfig
 from .engine import Engine
 from .runtime import InstanceLock, protect_path
 from .schemas import (
@@ -25,14 +26,16 @@ from .schemas import (
     SimulationInput,
 )
 from .simple import SimpleService
+from .startup import ConfiguredAutomation
 from .store import Store
 
 LOGGER = logging.getLogger("qecho")
 STATIC = Path(__file__).parent / "static"
 
 
-def _token(directory: Path, name: str, env_name: str) -> str:
-    configured = os.getenv(env_name, "").strip()
+def _token(directory: Path, name: str, env_name: str, explicit: str | None = None) -> str:
+    # A blank file value means generated credentials, never a stale environment override.
+    configured = (os.getenv(env_name, "") if explicit is None else explicit).strip()
     if configured:
         if len(configured) < 16 or not configured.isascii():
             raise ValueError(f"{env_name} must contain at least 16 ASCII characters")
@@ -57,8 +60,13 @@ def create_app(
     data_dir: str | Path | None = None,
     model_client: ModelClient | None = None,
     bridge_client: BridgeClient | None = None,
+    file_config: FileConfig | None = None,
 ) -> FastAPI:
-    directory = Path(data_dir or os.getenv("QECHO_DATA_DIR", ".data")).resolve()
+    directory = (
+        file_config.data_directory
+        if file_config
+        else Path(data_dir or os.getenv("QECHO_DATA_DIR", ".data")).resolve()
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -67,25 +75,46 @@ def create_app(
         lock = InstanceLock(directory / "instance.lock")
         lock.acquire()
         store = None
-        model = bridge = engine = None
+        model = bridge = engine = startup = None
         try:
             model = model_client or ModelClient()
             bridge = bridge_client or BridgeClient()
-            application.state.admin_token = _token(directory, "admin-token", "QECHO_ADMIN_TOKEN")
+            application.state.admin_token = _token(
+                directory,
+                "admin-token",
+                "QECHO_ADMIN_TOKEN",
+                file_config.server.admin_token if file_config else None,
+            )
             application.state.webhook_token = _token(
-                directory, "webhook-token", "QECHO_WEBHOOK_TOKEN"
+                directory,
+                "webhook-token",
+                "QECHO_WEBHOOK_TOKEN",
+                file_config.qq.event_token if file_config else None,
             )
             store = Store(directory / "qecho.sqlite3")
             protect_path(directory / "qecho.sqlite3", 0o600)
+            if file_config:
+                store.import_file_settings(file_config.settings_patch())
             application.state.store = store
             application.state.bridge = bridge
             engine = Engine(store, model, bridge)
             application.state.engine = engine
             application.state.simple = SimpleService(store, bridge)
-            LOGGER.info("QEcho ready. Admin token file: %s", directory / "admin-token")
+            if file_config:
+                startup = ConfiguredAutomation(application.state.simple, file_config)
+                application.state.startup = startup
+                startup.begin()
+            LOGGER.info(
+                "QEcho ready. Admin token source: %s",
+                "server.admin_token in configuration file"
+                if file_config and file_config.server.admin_token
+                else directory / "admin-token",
+            )
             yield
         finally:
             try:
+                if startup:
+                    await startup.shutdown()
                 if engine and hasattr(engine, "shutdown"):
                     await engine.shutdown()
                 for client in (model, bridge):
@@ -118,6 +147,22 @@ def create_app(
 
     def admin(request: Request) -> None:
         authenticate(request, "admin_token")
+        if (
+            file_config
+            and request.method not in {"GET", "HEAD"}
+            and request.url.path not in {"/api/qq/sync", "/api/automation/stop"}
+        ):
+            raise HTTPException(409, "当前使用配置文件，请编辑配置并重启 QEcho 后生效")
+
+    def automation_state(payload: dict | None = None) -> dict:
+        state = payload if payload is not None else application.state.simple.status()
+        return state | {
+            "config_source": "file" if file_config else "web",
+            "config_file": file_config.source_path.name if file_config else "",
+            "configured_ids": list(file_config.agent.friends) if file_config else [],
+            "startup_state": application.state.startup.state if file_config else "manual",
+            "startup_error": application.state.startup.error if file_config else "",
+        }
 
     @application.middleware("http")
     async def response_headers(request: Request, call_next):
@@ -174,11 +219,16 @@ def create_app(
 
     @application.get("/api/automation", dependencies=[Depends(admin)])
     async def automation():
-        return application.state.simple.status()
+        return automation_state()
 
     @application.post("/api/qq/sync", dependencies=[Depends(admin)])
     async def sync_qq():
-        return await application.state.simple.sync()
+        result = (
+            await application.state.startup.sync()
+            if file_config
+            else await application.state.simple.sync()
+        )
+        return automation_state(result)
 
     @application.post("/api/automation/start", dependencies=[Depends(admin)])
     async def start_automation(body: AutomationStartInput):
@@ -188,7 +238,10 @@ def create_app(
 
     @application.post("/api/automation/stop", dependencies=[Depends(admin)])
     async def stop_automation():
-        return application.state.simple.stop()
+        result = (
+            application.state.startup.stop() if file_config else application.state.simple.stop()
+        )
+        return automation_state(result)
 
     @application.get("/api/contacts", dependencies=[Depends(admin)])
     async def contacts():

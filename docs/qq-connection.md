@@ -10,7 +10,7 @@ QEcho 不承担 QQ 登录。请先按 [NapCat 官方安装说明](https://napnek
 
 这里的 QQ 私聊接入使用个人账号桥接，不是 QQ 开放平台的机器人账号接口。个人账号实际可用性、登录和桥接版本需要在你的环境验证。
 
-首页“登录 QQ”默认打开 `http://127.0.0.1:6099/webui/qq_login`，可在折叠连接设置修改。NapCat 可能要求先进行 WebUI 认证、选择扫码，再由手机确认。QEcho 检测实际登录账号并同步好友，无需手填本人 QQ 号。首次部署仍需配置下面两个 HTTP 方向，仅打开登录页不会自动创建连接。
+首页“登录 QQ”默认打开 `http://127.0.0.1:6099/webui/qq_login`，文件模式在 `qq.login_url` 修改，网页模式在折叠连接设置修改。NapCat 可能要求先进行 WebUI 认证、选择扫码，再由手机确认。QEcho 检测实际登录账号并同步好友，无需手填本人 QQ 号。首次部署仍需配置下面两个 HTTP 方向，仅打开登录页不会自动创建连接。
 
 ## 配置两个方向
 
@@ -19,7 +19,7 @@ QEcho 不承担 QQ 登录。请先按 [NapCat 官方安装说明](https://napnek
 | QEcho → NapCat，查询好友/发送消息 | HTTP 服务端 | 地址 `127.0.0.1`、端口 `3000`，设置独立 token |
 | NapCat → QEcho，上报消息 | HTTP 客户端 | URL `http://127.0.0.1:8765/webhooks/onebot`，token 填 QEcho 的 webhook 令牌 |
 
-管理控制台的访问令牌、NapCat WebUI 登录密码、HTTP 服务端 token、HTTP 客户端 token 是不同用途，不能混用。NapCat 的 HTTP 服务端 token 填入 QEcho 的“连接设置 → QQ 连接设置 → 桥接访问令牌”，服务地址填 `http://127.0.0.1:3000`。QEcho 事件令牌可直接在“QQ 连接设置”中复制，也保存在数据目录的 `webhook-token` 文件；使用 `QECHO_WEBHOOK_TOKEN` 时以该环境变量的值为准。
+管理控制台的访问令牌、NapCat WebUI 登录密码、HTTP 服务端 token、HTTP 客户端 token 是不同用途，不能混用。文件模式将 HTTP 服务端 token 填入 `qq.api_token`，服务地址 `qq.api_url` 填 `http://127.0.0.1:3000`；事件令牌由 `qq.event_token` 指定，留空则启动后读取数据目录中的 `webhook-token`。字段非空时旧令牌文件不代表实际凭据。网页模式可在“QQ 连接设置”保存桥接地址/token并复制事件令牌；无文件时才支持 `QECHO_WEBHOOK_TOKEN` 覆盖。详见[配置文件说明](file-configuration.md)。
 
 入站 HTTP 客户端实际以 `X-Signature: sha1=<摘要>` 上报，摘要是使用 token 对**原始 HTTP 正文**计算的 HMAC-SHA1。出站调用 HTTP 服务端则使用 `Authorization: Bearer <服务端token>`。这两个认证方式不同，不能只给 HTTP 上报添加 Bearer 然后期待默认 NapCat 配置通过。
 
@@ -68,6 +68,16 @@ HTTP 客户端的 `reportSelfMessage` 应开启。只有桥接实际报告本人
 
 ## 首次连接顺序
 
+文件模式按以下顺序执行：
+
+1. 在 `qecho.toml` 填真实模型、QQ 连接及两个 HTTP 方向对应的 token；在 NapCat 保存双向 HTTP 配置。
+2. 先仅填写一位测试好友 QQ 号和提示词，将 `agent.auto_start = true`，运行启动脚本。
+3. 在 NapCat 登录 QQ，等待 QEcho 自动核对账号和好友范围并开始。
+4. 由该好友发送文本私聊，在状态页面和 QQ 实际记录核对回复，再按需增加文件名单并重启。
+5. 点击网页“停止”会永久取消本轮自动启动；关闭进程并重新启动才会恢复。
+
+仅在没有配置文件的网页模式使用下列流程：
+
 1. 在折叠“连接设置”配置真实模型、桥接服务地址/token 和登录页。保存后保持停止状态。
 2. 在“QQ 连接设置”复制上报地址与事件令牌，在 NapCat 建立 HTTP 客户端。管理令牌与事件令牌分别使用。
 3. 点击“登录 QQ”完成桥接登录，等待 QEcho 自动识别账号和好友；必要时点击“同步好友”。同步不自动勾选或授权。
@@ -78,7 +88,7 @@ HTTP 客户端的 `reportSelfMessage` 应开启。只有桥接实际报告本人
 
 ## 模型连接
 
-设置 `model_mode=live`，填写提供聊天补全接口的服务地址、模型名和可选 API Key。地址使用服务的 API 根路径，例如 `https://your-provider.example/v1`；QEcho 追加 `/chat/completions`，发送 `model`、`messages`、`temperature`、`stream=false`，读取 `choices[0].message.content`。不要把密钥放在 URL 中。
+文件模式在 `[model]` 设置 `mode = "live"`，填写 `base_url`、`name` 和可选 `api_key`；网页模式选择真实模型（API 对应 `model_mode=live`）。地址使用服务的 API 根路径，例如 `https://your-provider.example/v1`；QEcho 追加 `/chat/completions`，发送 `model`、`messages`、`temperature`、`stream=false`，读取 `choices[0].message.content`。不要把密钥放在 URL 中。
 
 API Key 为空时也允许连接用户自己部署、不需要认证的本地服务；是否需要密钥由对应模型服务决定。QEcho 不跟随重定向，模型失败时不把服务返回的原始响应内容写入用户可见错误，避免意外暴露密钥和消息内容。
 

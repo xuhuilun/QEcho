@@ -2,6 +2,7 @@
 .venv
 .data
 .env
+qecho.toml
 __pycache__
 .pytest_cache
 .ruff_cache

@@ -108,6 +108,42 @@ class Store:
             )
         return self.get_settings()
 
+    def import_file_settings(self, patch):
+        """Apply a complete file-owned configuration while preserving runtime identity."""
+        values = SettingsPatch.model_validate(patch).model_dump(
+            exclude_none=True, exclude_unset=True
+        )
+        with self._lock, self.db:
+            settings = DEFAULT_SETTINGS | json.loads(
+                self.db.execute("SELECT data FROM settings WHERE id=1").fetchone()[0]
+            )
+            bound_account = settings["qq_self_id"]
+            for name in ("model_api_key", "bridge_token"):
+                value = values.pop(name, "")
+                values.pop("clear_" + name, None)
+                if value:
+                    self.db.execute("INSERT OR REPLACE INTO secrets VALUES (?,?)", (name, value))
+                else:
+                    self.db.execute("DELETE FROM secrets WHERE name=?", (name,))
+            settings.update(values)
+            settings.update(
+                qq_self_id=bound_account,
+                enabled=False,
+                simple_mode=True,
+                revision=settings["revision"] + 1,
+            )
+            self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
+            for row in self.db.execute("SELECT id,data FROM contacts").fetchall():
+                contact = json.loads(row[1])
+                contact.update(enabled=False, revision=contact["revision"] + 1)
+                self.db.execute(
+                    "UPDATE contacts SET data=? WHERE id=?", (json.dumps(contact), row[0])
+                )
+            self.db.execute(
+                "UPDATE messages SET status='cancelled',error='已导入文件配置，旧未发送任务已取消' WHERE status IN ('received','processing','generating','draft')"
+            )
+        return self.get_settings()
+
     def list_contacts(self):
         with self._lock:
             return [

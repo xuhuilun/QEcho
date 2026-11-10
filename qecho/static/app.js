@@ -108,6 +108,10 @@ function sameSelection(a, b) {
   return a.size === b.length && b.every((id) => a.has(String(id)));
 }
 
+function fileMode() {
+  return state.automation?.config_source === "file";
+}
+
 function markDirty() {
   const applied = state.automation;
   state.dirty =
@@ -142,8 +146,10 @@ function applyAutomation(
   )
     return;
   state.automation = payload;
-  if (adoptDraft || (!state.dirty && !preserveDraft)) {
-    state.selected = new Set((payload.selected_ids || []).map(String));
+  if (fileMode() || adoptDraft || (!state.dirty && !preserveDraft)) {
+    state.selected = new Set(
+      (fileMode() ? payload.configured_ids || [] : payload.selected_ids || []).map(String),
+    );
     $("#agent-prompt").value = payload.prompt || "";
     state.editRevision = payload.revision;
     state.dirty = false;
@@ -164,6 +170,7 @@ function applyAutomation(
 function renderControls() {
   const automation = state.automation || {};
   const running = Boolean(automation.running);
+  const managed = fileMode();
   const paused = Array.isArray(automation.paused_ids)
     ? automation.paused_ids.length
     : 0;
@@ -180,7 +187,19 @@ function renderControls() {
     ? `${active} 位好友自动回复中${paused ? ` · ${paused} 位已人工接管` : ""}`
     : "全部代聊已停止";
   let description;
-  if (state.startPending)
+  if (managed) {
+    const messages = {
+      disabled: "自动启动未开启。请在配置文件设置 auto_start = true 后重启。",
+      waiting: "正在等待 NapCat 连接与 QQ 登录；可随时点击停止。",
+      starting: "正在核对 QQ 账号和配置中的好友范围；可随时点击停止。",
+      running: running
+        ? "正在按配置文件自动回复。修改配置或恢复人工接管的好友需重启。"
+        : "自动回复已暂停。请核对 QQ 和最近状态，修改配置后重启。",
+      stopped: "已停止。本次运行不会自动恢复；需要继续时关闭终端并重新启动。",
+      failed: automation.startup_error || "自动启动失败，请检查配置后重启。",
+    };
+    description = messages[automation.startup_state] || "配置文件已加载。";
+  } else if (state.startPending)
     description = "正在检查连接并启动，期间仍可随时停止。";
   else if (state.dirty)
     description = "有未应用的修改，点击“保存并开始自动回复”后生效。";
@@ -195,18 +214,46 @@ function renderControls() {
   $("#selected-count").textContent = `已选 ${state.selected.size} 位`;
   $("#prompt-count").textContent = `${$("#agent-prompt").value.length} 字`;
   $("#start-automation").disabled = state.startPending;
+  $("#start-automation").hidden = managed;
+  $("#settings-panel").hidden = managed;
+  $("#clear-selection").hidden = managed;
+  $("#agent-prompt").readOnly = managed;
+  $("#config-notice").hidden = !managed;
+  $("#config-notice").textContent = managed
+    ? `配置来自 ${automation.config_file}，修改文件并重启后生效。${description}`
+    : "";
+  $("#page-intro").textContent = managed
+    ? "按配置文件自动运行。这里可以查看状态、登录 QQ 和停止。"
+    : "登录 QQ，勾选好友，写好提示词，然后开始。";
+  $("#friends-title").textContent = managed ? "配置中的代聊好友" : "选择代聊好友";
+  $("#prompt-help").textContent = managed
+    ? "提示词从配置文件读取，修改后重启生效。"
+    : "人格、语气、称呼、话题和边界，都可以写在这里。";
+  $("#recent-note").textContent = managed
+    ? "本人主动回复会接管该好友；停止后需重新启动 QEcho 才能恢复代聊。"
+    : "本人主动回复会接管该好友；“停止”会暂停全部代聊。再次开始会按当前选择重新启用。";
+  $("#model-notice").textContent = managed
+    ? "请在配置文件填写真实模型地址和名称，再重启。"
+    : "还未配置真实模型。展开下方连接设置，填写模型地址和名称。";
   // Stop intentionally stays enabled, even while a start request is in flight.
 }
 
 function renderFriends() {
   const query = $("#friend-search").value.trim().toLowerCase();
-  const filtered = state.friends.filter((friend) =>
+  const managed = fileMode();
+  const friends = managed
+    ? [...state.selected].map((id) =>
+        state.friends.find((friend) => String(friend.qq_id) === id) || { qq_id: id, name: id },
+      )
+    : state.friends;
+  const filtered = friends.filter((friend) =>
     `${friend.name} ${friend.qq_id}`.toLowerCase().includes(query),
   );
   const fingerprint = JSON.stringify([
     filtered,
     [...state.selected].sort(),
     state.synced,
+    managed,
   ]);
   if (fingerprint === state.friendsFingerprint) return;
   state.friendsFingerprint = fingerprint;
@@ -247,6 +294,7 @@ function renderFriends() {
     const checkbox = node("input");
     checkbox.type = "checkbox";
     checkbox.checked = state.selected.has(id);
+    checkbox.disabled = managed;
     checkbox.setAttribute("aria-label", `代聊好友 ${friend.name}，QQ ${id}`);
     const avatar = node(
       "span",
@@ -268,7 +316,9 @@ function renderFriends() {
     });
     list.append(label);
   }
-  $("#friend-total").textContent = state.synced
+  $("#friend-total").textContent = managed
+    ? `配置指定 ${friends.length} 位好友`
+    : state.synced
     ? `共 ${state.friends.length} 位好友`
     : "尚未同步好友";
 }
@@ -331,17 +381,18 @@ async function syncFriends({ silent = false } = {}) {
     state.friends = Array.isArray(payload.friends) ? payload.friends : [];
     applyAutomation(payload);
     const known = new Set(state.friends.map((friend) => String(friend.qq_id)));
-    const removed = [...state.selected].filter((id) => !known.has(id));
+    const removed = fileMode() ? [] : [...state.selected].filter((id) => !known.has(id));
     for (const id of removed) state.selected.delete(id);
     if (removed.length) markDirty();
     state.friendsFingerprint = "";
     renderFriends();
     renderControls();
-    $("#connection-message").textContent =
-      `好友已同步${removed.length ? `，${removed.length} 位已不在好友列表，已取消选择` : "，勾选后再开始代聊"}。`;
+    $("#connection-message").textContent = fileMode()
+      ? "好友已同步，代聊范围由配置文件决定。"
+      : `好友已同步${removed.length ? `，${removed.length} 位已不在好友列表，已取消选择` : "，勾选后再开始代聊"}。`;
     $("#connection-message").classList.remove("error");
     if (!silent)
-      notify(`已同步 ${state.friends.length} 位好友，没有自动勾选新好友。`);
+      notify(`已同步 ${state.friends.length} 位好友${fileMode() ? "。" : "，没有自动勾选新好友。"}`);
   } catch (error) {
     state.connected = false;
     if (state.userInteracted) {
@@ -431,6 +482,10 @@ async function enterApp() {
   $("#settings-panel").open = false;
   renderSettings();
   applyAutomation(automation, { adoptDraft: true });
+  $("#connection-message").textContent = fileMode()
+    ? "连接参数来自配置文件，QQ 扫码登录由 NapCat 提供。"
+    : "登录由 NapCat 提供，首次部署需在下方配置连接。";
+  $("#connection-message").classList.remove("error");
   $("#auth-screen").hidden = true;
   $("#app-shell").hidden = false;
   // One quiet check recognizes an already-logged-in bridge; repeated login checks

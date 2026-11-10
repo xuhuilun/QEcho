@@ -512,6 +512,11 @@ code {
   font-size: 9px;
   color: #b18b62;
 }
+#config-notice {
+  margin: 0 0 20px;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .recent-card {
   margin-top: 24px;
 }

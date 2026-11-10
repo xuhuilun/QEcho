@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+qecho.toml
 __pycache__/
 .pytest_cache/
 .ruff_cache/

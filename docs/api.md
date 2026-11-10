@@ -8,7 +8,7 @@
 
 | 接口 | 作用 |
 | --- | --- |
-| `GET /api/automation` | 返回 `running/account_id/selected_ids/paused_ids/active_count/prompt/revision/model_ready/login_url/recent`，最近最多 8 条回复状态，不返回聊天正文或密钥 |
+| `GET /api/automation` | 返回 `running/account_id/selected_ids/paused_ids/active_count/prompt/revision/model_ready/login_url/recent` 和配置来源、启动状态，最近最多 8 条回复状态，不返回聊天正文或密钥 |
 | `POST /api/qq/sync` | 自动识别桥接登录账号并获取好友，返回上述状态及 `friends: [{qq_id, name}]`，不自动授权 |
 | `POST /api/automation/start` | 请求 `qq_ids`、非空 `prompt`、`expected_revision`；验证实际好友列表后原子替换授权范围和统一提示词，所选好友使用自动回复模式 |
 | `POST /api/automation/stop` | 立即暂停并取消未发送任务，不等待桥接、模型或会话锁 |
@@ -17,6 +17,16 @@
 启动使用完整好友名单，最多 500 位，QQ 号不能重复。配置或联系人状态在异步核验期间改变，启动失败并保持暂停；更晚的人工接管不会被旧启动覆盖。已有真实 QQ 历史时不能直接换号复用。
 
 `simple_mode=true` 时统一提示词不叠加旧联系人人格/语气/资料，旧数据不删除。原有会话 API 继续保留兼容，首页以极简自动代聊为主。
+
+## 文件配置模式
+
+使用 `qecho.toml` 时，状态增加 `config_source="file"`、`config_file`（仅文件名）、`configured_ids`（文件指定的 QQ 号）、`startup_state` 和 `startup_error`；网页模式为 `config_source="web"`、`startup_state="manual"`。QQ 同步和停止也返回这些状态字段。`selected_ids` 表示已生效授权，等待期间可为空；`configured_ids` 表示计划名单，两者不要混淆。
+
+启动状态为 `disabled`（未开启自动启动）、`waiting`（等待桥接和登录）、`starting`（核验账号/好友）、`running`（已成功启动）、`stopped`（本轮已停止）、`failed`（需修正并重启）。实际是否仍在自动回复以 `running` 布尔值为准，启动状态记录协调任务的结果。
+
+文件模式允许已认证的所有 GET、`POST /api/qq/sync`、`POST /api/automation/stop`。其他管理写请求统一返回 409，包括 settings、联系人、消息清理/发送/取消/重新生成/演练、任意名单开始请求；错误提示编辑文件并重启。事件入口不受该管理写限制，仍使用独立事件认证。
+
+同步与后台启动串行执行，停止独立提交暂停和版本屏障并取消启动任务，无需等待网络。停止后不能通过开始 API 恢复，重新启动进程才会重新执行文件计划。配置优先级和密钥留空行为见[配置文件使用说明](file-configuration.md)。
 
 ## 配置字段
 

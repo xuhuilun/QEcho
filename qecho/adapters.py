@@ -17,11 +17,12 @@ class ProviderError(Exception):
 
 
 class BridgeError(Exception):
-    """A bridge operation failed, possibly after the message was delivered."""
+    """Separate delivery uncertainty from retryable read-only readiness checks."""
 
-    def __init__(self, message: str, uncertain: bool = False):
+    def __init__(self, message: str, uncertain: bool = False, *, retryable: bool = False):
         super().__init__(message)
         self.uncertain = uncertain
+        self.retryable = retryable
 
 
 def _endpoint(base_url: str, action: str) -> str:
@@ -131,10 +132,16 @@ class BridgeClient(_HTTPClient):
         except (ValueError, httpx.InvalidURL) as exc:
             raise BridgeError("QQ 桥接地址无效，请检查连接设置") from exc
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
-            raise BridgeError("无法连接 QQ 桥接，请检查桥接是否运行及地址是否正确") from exc
+            raise BridgeError(
+                "无法连接 QQ 桥接，请检查桥接是否运行及地址是否正确", retryable=not sending
+            ) from exc
+        except (httpx.ProtocolError, httpx.UnsupportedProtocol, httpx.DecodingError) as exc:
+            raise BridgeError("QQ 桥接通信格式无效，请检查连接设置", uncertain=sending) from exc
         except httpx.RequestError as exc:
             raise BridgeError(
-                "QQ 桥接请求中断或超时，请核对消息是否已经送达", uncertain=sending
+                "QQ 桥接请求中断或超时，请核对消息是否已经送达",
+                uncertain=sending,
+                retryable=not sending,
             ) from exc
 
         if not 200 <= response.status_code < 300:
@@ -142,7 +149,10 @@ class BridgeClient(_HTTPClient):
             definite_rejections = {400, 401, 403, 404, 405, 406, 413, 415, 422, 429}
             uncertain = sending and response.status_code not in definite_rejections
             raise BridgeError(
-                f"QQ 桥接返回 HTTP {response.status_code}，请检查桥接配置", uncertain=uncertain
+                f"QQ 桥接返回 HTTP {response.status_code}，请检查桥接配置",
+                uncertain=uncertain,
+                retryable=not sending
+                and (response.status_code in {408, 429} or response.status_code >= 500),
             )
         try:
             body = response.json()
@@ -153,7 +163,13 @@ class BridgeClient(_HTTPClient):
 
         status, retcode = body.get("status"), body.get("retcode")
         if status == "failed" and type(retcode) is int and retcode not in {0, 1}:
-            raise BridgeError("QQ 桥接拒绝了请求，请检查桥接日志")
+            # OneBot has no universal not-logged-in error code. Only the login
+            # readiness query can treat a valid failed envelope as not ready;
+            # never infer this from a provider's free-form error text.
+            raise BridgeError(
+                "QQ 桥接拒绝了请求，请检查桥接日志",
+                retryable=not sending and action == "get_login_info",
+            )
         if status != "ok" or type(retcode) is not int or retcode != 0:
             raise BridgeError("QQ 桥接未确认操作成功，请核对消息状态", uncertain=sending)
         return body.get("data")
@@ -197,6 +213,16 @@ class BridgeClient(_HTTPClient):
         """Return the bridge's current account for an explicit pre-send check."""
         data = await self._call(base_url, token, "get_login_info", {}, sending=False)
         user_id = data.get("user_id") if isinstance(data, dict) else None
+        if data is None or (
+            isinstance(data, dict)
+            and (
+                user_id is None
+                or user_id == ""
+                or (type(user_id) is int and user_id == 0)
+                or (isinstance(user_id, str) and user_id == "0")
+            )
+        ):
+            raise BridgeError("QQ 桥接未返回有效登录账号，正在等待 QQ 登录", retryable=True)
         if (
             isinstance(user_id, bool)
             or not isinstance(user_id, (str, int))
