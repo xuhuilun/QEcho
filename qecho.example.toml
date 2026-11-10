@@ -1,0 +1,49 @@
+# 复制为 qecho.toml 后填写；真实文件已被 Git 忽略，包含密钥时不要分享。
+# 启动脚本首次只创建该文件并退出，编辑完成后再次运行脚本。
+# 修改配置后需停止并重新启动 QEcho，不会热重载。
+# 所有密钥/令牌使用可打印 ASCII，不含换行、Tab 或其他控制字符。
+
+[server]
+host = "127.0.0.1"
+port = 8765
+# 相对路径以本配置文件所在目录为准。每个 QQ 账号使用独立数据目录。
+data_dir = ".data"
+# 留空会使用数据目录中的 admin-token；自行设置时至少 16 个 ASCII 字符。
+admin_token = ""
+
+[model]
+mode = "live"
+# 填 API 根地址，程序会追加 /chat/completions；下面的示例地址需替换。
+base_url = "https://your-provider.example/v1"
+name = "your-model-name"
+# 留空将清除该数据目录中旧的模型密钥，不会悄悄复用网页旧配置。
+api_key = ""
+temperature = 0.7
+context_messages = 30
+max_reply_chars = 800
+
+[qq]
+# NapCat 需要另行安装、启动并登录个人 QQ；启动器不会安装或代替扫码。
+# API 服务地址是 OneBot HTTP 服务端，不是 6099 的 NapCat WebUI。
+api_url = "http://127.0.0.1:3000"
+# 与 NapCat HTTP 服务端的 token 一致；留空会清除旧桥接密钥。
+api_token = ""
+login_url = "http://127.0.0.1:6099/webui/qq_login"
+# 与 NapCat HTTP 客户端用于上报事件的 token 一致。
+# 推荐自行设置至少 16 个 ASCII 字符的随机值，并在两边填写一致。
+# 留空时，启动后读取数据目录中的 webhook-token 文件取得生成的事件令牌。
+event_token = ""
+
+[agent]
+# 填需要代聊的好友 QQ 号字符串，例如 ["123456789", "234567890"]。
+# 启动时会核对当前账号的实际好友名单；不会向名单外的对象自动回复。
+friends = []
+prompt = """
+像平时的我一样聊天，语气温柔自然，回复简短。
+认真回应对方提到的事情，不要连续追问。
+不知道我的经历或安排时不要编造。
+"""
+# 填好真实模型、QQ 连接与好友后改为 true，启动后等待 QQ 登录并自动开始。
+# false 只启动工作台并保持停止；文件模式下恢复自动回复需改配置并重启。
+auto_start = false
+reply_delay_seconds = 2.0

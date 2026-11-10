@@ -63,10 +63,12 @@
           <div>
             <p class="eyebrow">YOUR WORDS, YOUR WAY</p>
             <h1>QQ 自动代聊</h1>
-            <p>登录 QQ，勾选好友，写好提示词，然后开始。</p>
+            <p id="page-intro">登录 QQ，勾选好友，写好提示词，然后开始。</p>
           </div>
           <span class="page-mark" aria-hidden="true">↳</span>
         </div>
+
+        <p id="config-notice" class="model-notice" role="status" hidden></p>
 
         <section class="connection-card" aria-labelledby="connection-title">
           <div class="connection-icon" aria-hidden="true">Q</div>
@@ -137,7 +139,7 @@
               placeholder="写下你希望 QEcho 呈现的人格、语气和聊天规则。&#10;&#10;例如：像平时的我一样聊天，真诚、轻松，回复简短一点。和对方聊喜欢的音乐和日常，不要连续追问。不知道我的安排时，不要替我答应。"
             ></textarea>
             <div class="prompt-footnote">
-              <span>人格、语气、称呼、话题和边界，都可以写在这里。</span
+              <span id="prompt-help">人格、语气、称呼、话题和边界，都可以写在这里。</span
               ><span id="prompt-count">0 字</span>
             </div>
             <div id="model-notice" class="model-notice" hidden>
@@ -156,7 +158,7 @@
               还没有运行记录。开始后，这里会显示回复状态。
             </p>
           </div>
-          <p class="recent-note">
+          <p id="recent-note" class="recent-note">
             本人主动回复会接管该好友；“停止”会暂停全部代聊。再次开始会按当前选择重新启用。
           </p>
         </section>

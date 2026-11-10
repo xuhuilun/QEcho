@@ -150,6 +150,7 @@ async def test_bridge_failure_classification(status, body, uncertain):
                 "http://localhost:3000", "bridge-secret", "123", "hi"
             )
     assert error.value.uncertain is uncertain
+    assert error.value.retryable is False
     assert "bridge-secret" not in str(error.value)
 
 
@@ -171,6 +172,7 @@ async def test_bridge_network_failure_never_retries(exception, uncertain):
                 "http://localhost:3000", "bridge-secret", "123", "hi"
             )
     assert error.value.uncertain is uncertain
+    assert error.value.retryable is False
     assert len(requests) == 1
     assert "bridge-secret" not in str(error.value)
 
@@ -242,20 +244,20 @@ async def test_login_info_returns_bridge_account_as_string(user_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "data",
+    "data,retryable",
     [
-        {},
-        None,
-        [],
-        {"user_id": True},
-        {"user_id": "abc"},
-        {"user_id": -1},
-        {"user_id": 0},
-        {"user_id": 1.5},
-        {"user_id": "１２３４５６"},
+        ({}, True),
+        (None, True),
+        ([], False),
+        ({"user_id": True}, False),
+        ({"user_id": "abc"}, False),
+        ({"user_id": -1}, False),
+        ({"user_id": 0}, True),
+        ({"user_id": 1.5}, False),
+        ({"user_id": "１２３４５６"}, False),
     ],
 )
-async def test_login_info_rejects_missing_or_invalid_account(data):
+async def test_login_info_rejects_missing_or_invalid_account(data, retryable):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(200, json={"status": "ok", "retcode": 0, "data": data})
@@ -264,6 +266,7 @@ async def test_login_info_rejects_missing_or_invalid_account(data):
         with pytest.raises(BridgeError, match="有效登录账号") as error:
             await BridgeClient(client).login_info("http://localhost:3000", "bridge-secret")
     assert error.value.uncertain is False
+    assert error.value.retryable is retryable
 
 
 @pytest.mark.asyncio
@@ -278,4 +281,113 @@ async def test_login_info_failure_is_definite_and_does_not_send():
         with pytest.raises(BridgeError) as error:
             await BridgeClient(client).login_info("http://localhost:3000", "bridge-secret")
     assert error.value.uncertain is False
+    assert error.value.retryable is True
     assert requests == ["/get_login_info"]
+
+
+def test_bridge_error_retryability_is_independent_of_delivery_uncertainty():
+    assert BridgeError("failure").retryable is False
+    assert BridgeError("delivery unknown", uncertain=True).retryable is False
+    assert BridgeError("login not ready", retryable=True).uncertain is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,retryable",
+    [
+        (401, False),
+        (403, False),
+        (404, False),
+        (408, True),
+        (429, True),
+        (500, True),
+        (503, True),
+        (307, False),
+    ],
+)
+async def test_readonly_http_errors_distinguish_configuration_from_readiness(status, retryable):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={}))
+    ) as client:
+        with pytest.raises(BridgeError) as error:
+            await BridgeClient(client).login_info("http://localhost:3000", "bridge-secret")
+    assert error.value.retryable is retryable
+    assert error.value.uncertain is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exception,retryable",
+    [
+        (httpx.ConnectError, True),
+        (httpx.ConnectTimeout, True),
+        (httpx.PoolTimeout, True),
+        (httpx.ReadTimeout, True),
+        (httpx.WriteError, True),
+        (httpx.RemoteProtocolError, False),
+        (httpx.LocalProtocolError, False),
+        (httpx.DecodingError, False),
+    ],
+)
+async def test_readonly_network_errors_are_classified_without_internal_retries(
+    exception, retryable
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        raise exception("bridge-secret", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(BridgeError) as error:
+            await BridgeClient(client).login_info("http://localhost:3000", "bridge-secret")
+    assert error.value.retryable is retryable
+    assert error.value.uncertain is False
+    assert len(requests) == 1
+    assert "bridge-secret" not in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"not JSON", b"[]", b"{}"])
+async def test_readonly_malformed_envelopes_are_not_retried(body):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
+    ) as client:
+        with pytest.raises(BridgeError) as error:
+            await BridgeClient(client).login_info("http://localhost:3000", "bridge-secret")
+    assert error.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_onebot_business_failure_is_retryable_only_for_login_readiness_query():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"status": "failed", "retcode": 100, "message": "not used for classification"},
+            )
+        )
+    ) as client:
+        with pytest.raises(BridgeError) as error:
+            await BridgeClient(client).friends("http://localhost:3000", "bridge-secret")
+    assert error.value.retryable is False
+    assert error.value.uncertain is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///bridge",
+        "https://secret:secret@bridge.example",
+        "http://bridge.example?token=secret",
+    ],
+)
+async def test_readonly_invalid_endpoint_is_not_retried(url):
+    def handler(request):
+        pytest.fail("invalid endpoints must not connect")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(BridgeError) as error:
+            await BridgeClient(client).login_info(url, "bridge-secret")
+    assert error.value.retryable is False
