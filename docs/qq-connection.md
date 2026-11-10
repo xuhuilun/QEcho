@@ -2,6 +2,10 @@
 
 ## 运行方式
 
+按系统安装、扫码登录、创建两个 HTTP 连接和逐项验收的完整步骤已写入 [README 首页的 NapCat 部署与连接](../README.md#napcat-部署与连接)。本页补充协议字段和配置示例。
+
+2026-11-10 核对的官方安装入口：[Windows 一键包](https://github.com/NapNeko/NapCatQQ/releases/latest)、[macOS 安装器](https://github.com/NapNeko/NapCat-Mac-Installer/releases/latest)、[Linux 原生安装脚本说明](https://github.com/NapNeko/NapCat-Installer)。macOS 安装器支持 macOS 12+ 的 Intel / Apple Silicon；这些是官方说明范围，不代表本项目已实测各平台的真实 QQ 登录。
+
 QEcho 不承担 QQ 登录。请先按 [NapCat 官方安装说明](https://napneko.github.io/guide/napcat)安装桥接并自行登录 QQ，然后打开 NapCat 的网络配置。QEcho 接收好友文本私聊，使用 OneBot 11 API 发送纯文本；未授权联系人和群聊不会自动代聊。
 
 这里的 QQ 私聊接入使用个人账号桥接，不是 QQ 开放平台的机器人账号接口。个人账号实际可用性、登录和桥接版本需要在你的环境验证。
@@ -15,7 +19,7 @@ QEcho 不承担 QQ 登录。请先按 [NapCat 官方安装说明](https://napnek
 | QEcho → NapCat，查询好友/发送消息 | HTTP 服务端 | 地址 `127.0.0.1`、端口 `3000`，设置独立 token |
 | NapCat → QEcho，上报消息 | HTTP 客户端 | URL `http://127.0.0.1:8765/webhooks/onebot`，token 填 QEcho 的 webhook 令牌 |
 
-管理控制台的访问令牌、NapCat WebUI 登录密码、HTTP 服务端 token、HTTP 客户端 token 是不同用途，不能混用。QEcho 的 HTTP 服务端 token 填入“连接设置 → QQ 桥接令牌”，地址填 `http://127.0.0.1:3000`。首次运行生成的 webhook 令牌位于 QEcho 数据目录的 `webhook-token` 文件；使用 `QECHO_WEBHOOK_TOKEN` 时填入该环境变量的值。
+管理控制台的访问令牌、NapCat WebUI 登录密码、HTTP 服务端 token、HTTP 客户端 token 是不同用途，不能混用。NapCat 的 HTTP 服务端 token 填入 QEcho 的“连接设置 → QQ 连接设置 → 桥接访问令牌”，服务地址填 `http://127.0.0.1:3000`。QEcho 事件令牌可直接在“QQ 连接设置”中复制，也保存在数据目录的 `webhook-token` 文件；使用 `QECHO_WEBHOOK_TOKEN` 时以该环境变量的值为准。
 
 入站 HTTP 客户端实际以 `X-Signature: sha1=<摘要>` 上报，摘要是使用 token 对**原始 HTTP 正文**计算的 HMAC-SHA1。出站调用 HTTP 服务端则使用 `Authorization: Bearer <服务端token>`。这两个认证方式不同，不能只给 HTTP 上报添加 Bearer 然后期待默认 NapCat 配置通过。
 
@@ -58,7 +62,7 @@ QEcho 不承担 QQ 登录。请先按 [NapCat 官方安装说明](https://napnek
 }
 ```
 
-HTTP 客户端的 `reportSelfMessage` 应开启。只有桥接实际报告本人发送消息时，QEcho 才能尝试识别本人回复并自动接管；也可始终使用控制台中的“接管”。不同设备发送事件的实际格式和回报时序需要运行验证。QEcho 已发消息根据外部消息编号排除，避免把自身回复当成新的聊天请求。
+HTTP 客户端的 `reportSelfMessage` 应开启。只有桥接实际报告本人发送消息时，QEcho 才能尝试识别本人回复并自动接管；也可始终使用首页“停止”暂停全部自动回复。不同设备发送事件的实际格式和回报时序需要运行验证。QEcho 已发消息根据外部消息编号排除，避免把自身回复当成新的聊天请求。
 
 字段来源：[NapCat 配置说明](https://github.com/NapNeko/NapCatDocs/blob/main/src/config/basic.md)。如果 NapCat 与 QEcho 位于不同容器或主机，`127.0.0.1` 指各自所在环境，需要改为双方可访问的地址；同时配置网络认证和相应的监听地址。
 
