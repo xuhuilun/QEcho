@@ -61,7 +61,8 @@ def config(auto_start=True, friends=None):
     return SimpleNamespace(
         agent=SimpleNamespace(
             auto_start=auto_start,
-            friends=friends if friends is not None else ["234567"],
+            friends=[],
+            configured_friends=friends if friends is not None else ["234567"],
             prompt="严格使用文件中的聊天规则",
         )
     )

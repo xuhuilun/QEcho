@@ -20,7 +20,9 @@
 
 ## 文件配置模式
 
-使用 `qecho.toml` 时，状态增加 `config_source="file"`、`config_file`（仅文件名）、`configured_ids`（文件指定的 QQ 号）、`startup_state` 和 `startup_error`；网页模式为 `config_source="web"`、`startup_state="manual"`。QQ 同步和停止也返回这些状态字段。`selected_ids` 表示已生效授权，等待期间可为空；`configured_ids` 表示计划名单，两者不要混淆。
+使用 `qecho.toml` 时，状态增加 `config_source="file"`、`config_file`（仅文件名）、`configured_ids`（默认组与自定义组的计划名单）、`startup_state` 和 `startup_error`。`selected_ids` 表示已生效授权，等待期间可为空。`friend_prompt_profiles` 按配置中的 QQ 号索引，包含 `group`（组名，默认组为 `null`）和布尔字段 `has_personal_prompt`。状态中的 `prompt` 是全局提示词。QQ 同步和停止也返回这些状态字段。网页模式为 `config_source="web"`、`startup_state="manual"`，`friend_prompt_profiles` 为空对象。
+
+管理员可通过 `GET /api/contacts/{contact_id}/prompt` 核对该联系人的实际系统消息，包含全局提示词及匹配的分组、个人提示词。只读状态接口返回分组与个人配置标记，具体规则保存在配置文件中。
 
 启动状态为 `disabled`（未开启自动启动）、`waiting`（等待桥接和登录）、`starting`（核验账号/好友）、`running`（已成功启动）、`stopped`（本轮已停止）、`failed`（需修正并重启）。实际是否仍在自动回复以 `running` 布尔值为准，启动状态记录协调任务的结果。
 

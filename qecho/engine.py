@@ -1,16 +1,23 @@
 """Owner-controlled private-chat workflow; only this module can request sends."""
 
+from __future__ import annotations
+
 import asyncio
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from .adapters import BridgeError, ProviderError
 
+if TYPE_CHECKING:
+    from .config import AgentConfig
+
 
 class Engine:
-    def __init__(self, store, model, bridge):
+    def __init__(self, store, model, bridge, *, prompt_config: AgentConfig | None = None):
         self.store = store
         self.model = model
         self.bridge = bridge
+        self._prompt_config = prompt_config
         self._locks = defaultdict(asyncio.Lock)
         self._closing = False
         # An interrupted send cannot prove which self event belonged to it.
@@ -113,6 +120,18 @@ class Engine:
         settings = self.store.get_settings()
         contact = self.store.get_contact(contact_id)
         details = [settings["global_prompt"]]
+        if self._prompt_config is not None:
+            group = self._prompt_config.group_for(contact["qq_id"])
+            personal = self._prompt_config.friend_prompts.get(contact["qq_id"])
+            if group is not None or personal:
+                details.append(
+                    "全局约束始终适用。称呼、语气和表达风格等偏好冲突时，"
+                    "优先采用好友个人提示词，其次采用分组提示词，最后采用全局偏好。"
+                )
+                if group is not None:
+                    details.append(f"【分组提示词】\n{group.prompt}")
+                if personal:
+                    details.append(f"【好友个人提示词】\n{personal}")
         attributes = [
             ("主人称呼", settings["owner_name"]),
             ("当前联系人", contact["name"]),

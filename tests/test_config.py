@@ -139,6 +139,142 @@ def test_auto_start_requires_live_model_scope_and_prompt(tmp_path, text, field):
         load_config(write_config(tmp_path, text))
 
 
+def test_grouped_and_personal_prompts_preserve_default_scope_and_order(tmp_path):
+    path = write_config(
+        tmp_path,
+        FULL_CONFIG
+        + """
+[[agent.prompt_groups]]
+name = "  亲近好友  "
+friends = ["444555", "555666"]
+prompt = "语气轻松。"
+
+[[agent.prompt_groups]]
+name = "待分配"
+prompt = "保留模板。"
+
+[agent.friend_prompts]
+"234567" = "少用表情。"
+"555666" = "称呼对方为小林。"
+""",
+    )
+    agent = load_config(path).agent
+    assert agent.friends == ["234567", "345678"]
+    assert agent.configured_friends == ["234567", "345678", "444555", "555666"]
+    assert agent.group_for("234567") is None
+    group = agent.group_for("555666")
+    assert group.name == "亲近好友" and group.prompt == "语气轻松。"
+    assert group.friends == ["444555", "555666"]
+    assert agent.prompt_groups[1].friends == []
+    assert agent.friend_prompts == {"234567": "少用表情。", "555666": "称呼对方为小林。"}
+
+
+def test_auto_start_can_use_only_custom_groups(tmp_path):
+    text = (
+        FULL_CONFIG.replace('friends = ["234567", "345678"]', "friends = []")
+        + """
+[[agent.prompt_groups]]
+name = "朋友"
+friends = ["444555"]
+prompt = "语气自然。"
+"""
+    )
+    agent = load_config(write_config(tmp_path, text)).agent
+    assert agent.auto_start and agent.configured_friends == ["444555"]
+
+
+def test_empty_group_template_does_not_satisfy_auto_start_scope(tmp_path):
+    text = (
+        FULL_CONFIG.replace('friends = ["234567", "345678"]', "friends = []")
+        + """
+[[agent.prompt_groups]]
+name = "模板"
+prompt = "语气自然。"
+"""
+    )
+    with pytest.raises(ConfigError, match="required_for_auto_start"):
+        load_config(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            '[[agent.prompt_groups]]\nname="  "\nprompt="自然聊天"',
+            "agent.prompt_groups.0.name",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="  "',
+            "agent.prompt_groups.0.prompt",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"',
+            "agent.prompt_groups.0.prompt",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="自然聊天"\nfriends=[123456]',
+            "agent.prompt_groups.0.friends",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="自然聊天"\nfriends=["123456", "123456"]',
+            "agent.prompt_groups.0.friends",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="自然聊天"\n'
+            '[[agent.prompt_groups]]\nname=" 朋友 "\nprompt="语气温和"',
+            "duplicate_names",
+        ),
+        (
+            '[agent]\nfriends=["123456"]\n'
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="自然聊天"\nfriends=["123456"]',
+            "duplicate_friends_across_groups",
+        ),
+        (
+            '[[agent.prompt_groups]]\nname="朋友"\nprompt="自然聊天"\nfriends=["123456"]\n'
+            '[[agent.prompt_groups]]\nname="同事"\nprompt="语气温和"\nfriends=["123456"]',
+            "duplicate_friends_across_groups",
+        ),
+    ],
+)
+def test_invalid_prompt_groups_are_rejected_without_echoing_values(tmp_path, text, expected):
+    with pytest.raises(ConfigError) as error:
+        load_config(write_config(tmp_path, text))
+    assert expected in str(error.value)
+    assert "123456" not in str(error.value)
+
+
+def test_authorized_scope_limit_applies_across_default_and_custom_groups(tmp_path):
+    ids = [str(100000 + index) for index in range(501)]
+    text = f"""[agent]
+friends = {json.dumps(ids[:250])}
+[[agent.prompt_groups]]
+name = "朋友"
+friends = {json.dumps(ids[250:])}
+prompt = "语气自然。"
+"""
+    with pytest.raises(ConfigError, match="too_many_configured_friends"):
+        load_config(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        '" 123456"="新规则"\n"123456"="另一条规则"',
+        '"123456 "="新规则"',
+        '"not-a-qq-secret"="新规则"',
+        '"123456"="  "',
+        '"123456"=["private-prompt-value"]',
+        '"999999"="个人提示词不能增加授权"',
+    ],
+)
+def test_invalid_personal_prompt_keys_and_values_are_redacted(tmp_path, entries):
+    text = f'[agent]\nfriends=["123456"]\n[agent.friend_prompts]\n{entries}'
+    with pytest.raises(ConfigError, match=r"agent\.friend_prompts") as error:
+        load_config(write_config(tmp_path, text))
+    for submitted in ("123456", "999999", "not-a-qq-secret", "private-prompt-value"):
+        assert submitted not in str(error.value)
+
+
 @pytest.mark.parametrize(
     "text", ['[model]\napi_key="raw-secret-value', '[model\napi_key="raw-secret-value"']
 )

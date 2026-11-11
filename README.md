@@ -120,6 +120,27 @@ uv run --no-sync qecho --config qecho.toml
 
 `uv run qecho` 会自动发现当前目录的 `qecho.toml`。不存在该文件且未指定 `--config` / `QECHO_CONFIG` 时，进入原有网页配置模式，操作见[部署说明](docs/deployment.md#网页配置模式)。
 
+### 提示词分组
+
+`[agent].prompt` 是所有好友共用的全局系统提示词。未分组的好友放在 `[agent].friends`，自定义组的好友直接放进该组的 `friends`。以下示例中，`12345678` 使用全局默认组，另外两位好友共用「亲近好友」提示词，`23456789` 还会应用个人提示词。
+
+```toml
+[agent]
+friends = ["12345678"]
+prompt = "自然回复，保持事实准确，不替我作承诺。"
+auto_start = true
+
+[[agent.prompt_groups]]
+name = "亲近好友"
+friends = ["23456789", "34567890"]
+prompt = "语气轻松，主动回应对方提到的细节。"
+
+[agent.friend_prompts]
+"23456789" = "称呼对方为小林，少用表情。"
+```
+
+编辑已有文件时，在原 `[agent]` 中修改全局字段，在其后追加分组和个人提示词表。每位好友只列在一个组内。生成回复时依次加入全局、分组和个人提示词，称呼、语气等偏好优先采用更具体的设定。个人提示词只能附加给已列入代聊范围的好友。修改后重启，网页可查看分组和个人提示词标记。[配置字段与校验说明](docs/file-configuration.md#提示词分组与个人提示词)
+
 ## NapCat 部署与连接
 
 QEcho 负责 AI 和代聊规则，NapCat 负责 QQ 登录与消息收发。**两者都需要启动并保持运行。** 以下步骤默认两者在同一台电脑上直接运行。
@@ -256,7 +277,7 @@ uv run --no-sync python -c "import secrets; print(secrets.token_urlsafe(32))"
 | --- | --- |
 | NapCat 登录页打不开 | 先启动 NapCat；按其日志确认 WebUI 实际端口，更新 QEcho 登录页地址 |
 | 已登录 QQ，但同步好友失败 | 检查 HTTP 服务端是否已启用、3000 端口和服务端 token 是否一致 |
-| 好友能同步，但没有回复 | 检查 HTTP 客户端已启用、上报 URL 和事件令牌正确，以及 `agent.auto_start`、`agent.friends` 和页面运行状态 |
+| 好友能同步，但没有回复 | 检查 HTTP 客户端已启用、上报 URL 和事件令牌正确，并确认自动启动开关、默认组或自定义组名单以及页面运行状态 |
 | 401 / 签名校验失败 | 按上面的令牌表核对两边对应值；修改事件令牌后同步更新 NapCat HTTP 客户端 |
 | 本人回复后 Agent 仍在回复 | 检查 `reportSelfMessage` 已开启且桥接实际报告本人消息；仍可在 QEcho 点击“停止” |
 
@@ -264,7 +285,7 @@ uv run --no-sync python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## 开始代聊
 
-推荐的文件模式：填写 `agent.friends` 和 `agent.prompt`，设置 `agent.auto_start = true`，再运行启动脚本。登录 QQ 后程序自动核对名单并开始。网页展示当前账号、配置名单、提示词与最近状态，不需要再次点击开始。修改配置或恢复被停止/人工接管的代聊，需要重新启动 QEcho。
+文件模式在默认组或自定义组填写好友 QQ 号，设置全局提示词和 `agent.auto_start = true`，再运行启动脚本。登录 QQ 后程序自动核对名单并开始。网页展示当前账号、名单与分组、全局提示词和最近状态。修改配置或恢复被停止、人工接管的代聊，需要重新启动 QEcho。
 
 未使用 `qecho.toml` 时，保留以下网页流程：
 
@@ -332,6 +353,6 @@ uv run ruff check .
 uv run ruff format --check qecho tests
 ```
 
-原有会话 API 和联系人数据保留兼容；新的统一提示词模式不叠加旧联系人隐藏的人格字段。真实模型人格效果、QQ 登录与真实好友收发仍需用户环境验收。
+原有会话 API 和联系人数据保留兼容。文件模式使用文件中配置的全局、分组和好友个人提示词。真实模型人格效果、QQ 登录与真实好友收发仍需用户环境验收。
 
 [Dockerfile](Dockerfile) 与 [compose.yaml](compose.yaml) 保留为可选配置，尚未实际验收容器运行。
