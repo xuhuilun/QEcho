@@ -122,8 +122,9 @@ class ConfiguredAutomation:
                         try:
                             await self.simple.start(
                                 list(self.cfg.agent.configured_friends),
-                                self.cfg.agent.prompt,
+                                current["prompt"],
                                 expected_revision=current["revision"],
+                                keep_current_prompt=True,
                             )
                         except BridgeError:
                             if not self._stopped:

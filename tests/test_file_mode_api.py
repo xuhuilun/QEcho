@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,7 @@ from qecho.config import load_config
 ADMIN = "file-admin-token-123456789"
 EVENT = "file-events-token-12345678"
 AUTH = {"Authorization": f"Bearer {ADMIN}"}
+PROMPT_API = "/api/automation/prompts"
 
 
 class Model:
@@ -105,6 +107,26 @@ def event(client, user_id, message_id):
     )
 
 
+def current_prompts(client):
+    response = client.get(PROMPT_API, headers=AUTH)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def prompt_edit(revision, scope, prompt, key=""):
+    return {"scope": scope, "key": key, "prompt": prompt, "expected_revision": revision}
+
+
+def save_prompt(client, revision, scope, prompt, key=""):
+    response = client.patch(
+        PROMPT_API, headers=AUTH, json=prompt_edit(revision, scope, prompt, key)
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved["revision"] > revision
+    return saved
+
+
 def test_complete_file_start_needs_no_web_configuration(tmp_path, monkeypatch):
     monkeypatch.setenv("QECHO_ADMIN_TOKEN", "environment-token-ignored")
     monkeypatch.setenv("QECHO_WEBHOOK_TOKEN", "environment-events-ignored")
@@ -152,6 +174,183 @@ prompt = "这一组用简洁语气。"
 [agent.friend_prompts]
 "7654322" = "只有这位好友用昵称小林。"
 """
+
+
+def test_live_prompt_edits_apply_to_next_messages_and_clear_restores_inheritance(tmp_path):
+    cfg = config(tmp_path, prompt_sections=PROMPT_GROUPS)
+    model = Model()
+    bridge = Bridge(friend_ids=("7654321", "7654322", "7654323", "7654324"))
+    with TestClient(create_app(model_client=model, bridge_client=bridge, file_config=cfg)) as api:
+        status_until(api, "running")
+        original = current_prompts(api)
+
+        saved = save_prompt(api, original["revision"], "global", "使用实时保存的全局规则。")
+        assert event(api, 7654321, 1).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert saved["global_prompt"] in system and cfg.agent.prompt not in system
+
+        saved = save_prompt(api, saved["revision"], "group", "实时修改的组规则。", "亲近好友")
+        assert event(api, 7654323, 2).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert saved["groups"]["亲近好友"] in system
+        assert original["groups"]["亲近好友"] not in system
+
+        saved = save_prompt(api, saved["revision"], "friend", "实时修改的个人称呼。", "7654322")
+        assert event(api, 7654322, 3).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert system.index(saved["global_prompt"]) < system.index(saved["groups"]["亲近好友"])
+        assert system.index(saved["groups"]["亲近好友"]) < system.index(
+            saved["friend_prompts"]["7654322"]
+        )
+        assert original["friend_prompts"]["7654322"] not in system
+
+        assert event(api, 7654324, 4).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert original["groups"]["同学"] in system
+        assert saved["groups"]["亲近好友"] not in system
+        assert saved["friend_prompts"]["7654322"] not in system
+
+        cleared = save_prompt(api, saved["revision"], "friend", "", "7654322")
+        assert "7654322" not in cleared["friend_prompts"]
+        assert event(api, 7654322, 5).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert cleared["groups"]["亲近好友"] in system
+        assert saved["friend_prompts"]["7654322"] not in system
+        assert original["friend_prompts"]["7654322"] not in system
+        assert api.get("/api/automation", headers=AUTH).json()["running"]
+        assert [qq_id for qq_id, _ in bridge.sent] == [
+            "7654321",
+            "7654323",
+            "7654322",
+            "7654324",
+            "7654322",
+        ]
+
+
+def test_edit_invalidates_generation_already_in_progress(tmp_path):
+    cfg = config(tmp_path)
+    model, bridge = Model(), Bridge()
+    entered, release = threading.Event(), threading.Event()
+    generate = model.generate
+
+    async def gated_generate(*args):
+        reply = await generate(*args)
+        if len(model.calls) == 1:
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 8)
+        return reply
+
+    model.generate = gated_generate
+    with TestClient(create_app(model_client=model, bridge_client=bridge, file_config=cfg)) as api:
+        status_until(api, "running")
+        with ThreadPoolExecutor(max_workers=1) as requests:
+            processing = requests.submit(event, api, 7654321, 1)
+            try:
+                assert entered.wait(timeout=4)
+                assert cfg.agent.prompt in model.calls[0][0][0]["content"]
+                original = current_prompts(api)
+                saved = save_prompt(api, original["revision"], "global", "生成中保存的新规则。")
+            finally:
+                release.set()
+            assert processing.result(timeout=5).json()["status"] == "accepted"
+        assert bridge.sent == []
+        assert event(api, 7654321, 2).json()["status"] == "accepted"
+        assert saved["global_prompt"] in model.calls[-1][0][0]["content"]
+        assert bridge.sent == [("7654321", "明天见。")]
+
+
+@pytest.mark.parametrize("stage", ["waiting", "starting"])
+def test_prompt_saved_while_startup_waits_is_used_by_first_reply(tmp_path, stage):
+    cfg = config(tmp_path)
+    model, bridge = Model(), Bridge()
+    app = create_app(model_client=model, bridge_client=bridge, file_config=cfg)
+    entered, release = threading.Event(), threading.Event()
+    method = "login_info" if stage == "waiting" else "friends"
+    original_call = getattr(bridge, method)
+
+    async def gated_call(*args):
+        if app.state.startup.state == stage and not release.is_set():
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 8)
+        return await original_call(*args)
+
+    setattr(bridge, method, gated_call)
+    with TestClient(app) as api:
+        try:
+            assert entered.wait(timeout=4)
+            original = current_prompts(api)
+            saved = save_prompt(api, original["revision"], "global", "启动等待期间保存的规则。")
+        finally:
+            release.set()
+        status_until(api, "running")
+        assert event(api, 7654321, 1).json()["status"] == "accepted"
+        system = model.calls[-1][0][0]["content"]
+        assert saved["global_prompt"] in system and cfg.agent.prompt not in system
+
+
+def test_prompt_edits_survive_reopen_until_toml_prompt_definitions_change(tmp_path):
+    cfg = config(tmp_path, auto_start=False, prompt_sections=PROMPT_GROUPS)
+    original_file = cfg.source_path.read_bytes()
+    with TestClient(create_app(file_config=cfg)) as api:
+        original = current_prompts(api)
+        saved = save_prompt(api, original["revision"], "global", "保留网页全局规则。")
+        saved = save_prompt(api, saved["revision"], "group", "保留网页分组规则。", "亲近好友")
+        saved = save_prompt(api, saved["revision"], "friend", "保留网页个人规则。", "7654322")
+        assert cfg.source_path.read_bytes() == original_file
+
+    def reopen_prompts():
+        with TestClient(create_app(file_config=load_config(cfg.source_path))) as api:
+            return current_prompts(api)
+
+    prompt_fields = ("global_prompt", "groups", "friend_prompts")
+    reopened = reopen_prompts()
+    assert all(reopened[key] == saved[key] for key in prompt_fields)
+
+    non_prompt_edit = original_file.replace(b'name = "test-model"', b'name = "renamed-model"')
+    cfg.source_path.write_bytes(non_prompt_edit)
+    reopened = reopen_prompts()
+    assert all(reopened[key] == saved[key] for key in prompt_fields)
+
+    new_default = "以新的 TOML 全局规则为准。"
+    cfg.source_path.write_bytes(
+        non_prompt_edit.replace(cfg.agent.prompt.encode(), new_default.encode())
+    )
+    reset = reopen_prompts()
+    assert reset["global_prompt"] == new_default
+    assert reset["groups"] == original["groups"]
+    assert reset["friend_prompts"] == original["friend_prompts"]
+
+
+def test_prompt_editor_requires_admin_and_cannot_expand_friend_scope(tmp_path):
+    cfg = config(tmp_path, prompt_sections=PROMPT_GROUPS)
+    model = Model()
+    bridge = Bridge(friend_ids=("7654321", "7654322", "7654323", "7654324", "7654325"))
+    with TestClient(create_app(model_client=model, bridge_client=bridge, file_config=cfg)) as api:
+        status_until(api, "running")
+        original = current_prompts(api)
+        body = prompt_edit(original["revision"], "global", "保存后的规则。")
+        for headers in ({}, {"Authorization": f"Bearer {EVENT}"}):
+            assert api.get(PROMPT_API, headers=headers).status_code == 401
+            assert api.patch(PROMPT_API, headers=headers, json=body).status_code == 401
+
+        saved = save_prompt(api, original["revision"], "global", "保存后的规则。")
+        assert api.patch(PROMPT_API, headers=AUTH, json=body).status_code == 409
+        saved = save_prompt(api, saved["revision"], "friend", "给名单内好友新增规则。", "7654321")
+        assert saved["friend_prompts"]["7654321"] == "给名单内好友新增规则。"
+        for scope, key in (("group", "不存在的组"), ("friend", "7654325")):
+            attempt = prompt_edit(saved["revision"], scope, "越出配置范围", key)
+            assert api.patch(PROMPT_API, headers=AUTH, json=attempt).status_code == 409
+        assert current_prompts(api) == saved
+        assert event(api, 7654325, 1).json()["status"] == "ignored"
+        assert model.calls == bridge.sent == []
+
+
+def test_prompt_editor_is_unavailable_in_web_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("QECHO_ADMIN_TOKEN", ADMIN)
+    with TestClient(create_app(tmp_path)) as api:
+        assert api.get(PROMPT_API, headers=AUTH).status_code in (404, 409)
+        body = prompt_edit(1, "global", "文件模式的提示词编辑")
+        assert api.patch(PROMPT_API, headers=AUTH, json=body).status_code in (404, 409)
 
 
 def test_group_and_individual_prompts_reach_only_the_matching_friend(tmp_path):

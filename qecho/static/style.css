@@ -480,6 +480,48 @@ code {
   display: flex;
   flex-direction: column;
 }
+.prompt-scope-field {
+  margin: 0 20px 12px;
+}
+.prompt-scope-field select {
+  font-size: 12px;
+}
+.prompt-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px 16px;
+}
+.prompt-editor-actions p {
+  flex: 1 1 140px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prompt-editor-actions p.error {
+  color: var(--error);
+}
+.prompt-editor-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.prompt-review {
+  margin: 0 20px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.prompt-review pre {
+  max-height: 12rem;
+  overflow: auto;
+  margin: 6px 0 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .prompt-card > textarea {
   margin: 0 20px;
   width: calc(100% - 40px);

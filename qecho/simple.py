@@ -64,7 +64,7 @@ class SimpleService:
             raise ValueError("同步期间登录 QQ 已变化，请重新同步好友")
         return self.status() | {"friends": friends}
 
-    async def start(self, qq_ids, prompt, expected_revision):
+    async def start(self, qq_ids, prompt, expected_revision, *, keep_current_prompt=False):
         request = AutomationStartInput(
             qq_ids=qq_ids, prompt=prompt, expected_revision=expected_revision
         )
@@ -94,7 +94,7 @@ class SimpleService:
         self.store.activate_automation(
             account,
             selected,
-            request.prompt,
+            None if keep_current_prompt else request.prompt,
             current["revision"],
             expected_contacts=expected_contacts,
         )

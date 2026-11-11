@@ -21,6 +21,7 @@ const state = {
   mutation: 0,
   setup: null,
   setupPending: false,
+  promptEditor: null,
   friendsFingerprint: "",
   recentFingerprint: "",
 };
@@ -100,6 +101,7 @@ function showAuth() {
   sessionStorage.removeItem("qecho.adminToken");
   state.loginWatch = false;
   state.setup = null;
+  state.promptEditor = null;
   $("#webhook-token").value = "";
   $("#app-shell").hidden = true;
   $("#auth-screen").hidden = false;
@@ -111,6 +113,183 @@ function sameSelection(a, b) {
 
 function fileMode() {
   return state.automation?.config_source === "file";
+}
+
+function savedPrompt(editor) {
+  const { data, scope, key } = editor;
+  if (scope === "global") return data?.global_prompt || "";
+  const prompts = scope === "group" ? data?.groups : data?.friend_prompts;
+  return prompts && Object.hasOwn(prompts, key) ? prompts[key] : "";
+}
+
+function promptDirty() {
+  const editor = state.promptEditor;
+  return Boolean(editor?.data && $("#agent-prompt").value !== savedPrompt(editor));
+}
+
+function validPromptScope(editor) {
+  if (!editor?.data) return false;
+  if (editor.scope === "global") return true;
+  if (editor.scope === "group")
+    return Object.hasOwn(editor.data.groups, editor.key);
+  return state.selected.has(editor.key);
+}
+
+function renderPromptOptions() {
+  const editor = state.promptEditor;
+  if (!editor?.data) return;
+  const groups = Object.keys(editor.data.groups);
+  const names = new Map(
+    state.friends.map((friend) => [String(friend.qq_id), friend.name]),
+  );
+  const friends = [...state.selected].map((id) => [id, names.get(id)]);
+  const selected = JSON.stringify([editor.scope, editor.key]);
+  const missing = validPromptScope(editor) ? "" : selected;
+  const fingerprint = JSON.stringify([groups, friends, missing]);
+  if (fingerprint === editor.optionsFingerprint) return;
+  editor.optionsFingerprint = fingerprint;
+
+  const select = $("#prompt-scope");
+  function option(scope, key, label) {
+    const item = node("option", "", label);
+    item.value = JSON.stringify([scope, key]);
+    return item;
+  }
+  select.replaceChildren(option("global", "", "全局提示词"));
+  if (groups.length) {
+    const choices = node("optgroup");
+    choices.label = "分组";
+    choices.append(...groups.map((name) => option("group", name, name)));
+    select.append(choices);
+  }
+  if (friends.length) {
+    const choices = node("optgroup");
+    choices.label = "好友";
+    choices.append(
+      ...friends.map(([id, name]) =>
+        option("friend", id, name ? `${name} · QQ ${id}` : `QQ ${id}`),
+      ),
+    );
+    select.append(choices);
+  }
+  if (missing) select.append(option(editor.scope, editor.key, "已移除的编辑范围"));
+  select.value = selected;
+}
+
+function renderPromptEditor() {
+  const managed = fileMode();
+  const select = $("#prompt-scope");
+  if (!select) {
+    $("#agent-prompt").readOnly = managed;
+    return;
+  }
+  const editor = state.promptEditor;
+  $("#prompt-scope-field").hidden = !managed;
+  $("#prompt-editor-actions").hidden = !managed;
+  $("#prompt-review").hidden = !managed || !editor?.review;
+  if (!managed) {
+    $("#agent-prompt").readOnly = false;
+    return;
+  }
+  const valid = validPromptScope(editor);
+  const dirty = promptDirty();
+  const pending = Boolean(editor?.pending);
+  $("#agent-prompt").readOnly = pending || !valid;
+  select.disabled = pending || !editor?.data || Boolean(editor.conflict);
+  $("#save-prompt").disabled =
+    pending || !valid || !dirty || Boolean(editor?.conflict);
+  $("#reload-prompt").disabled = pending;
+  $("#reload-prompt").textContent = editor?.conflict
+    ? "查看最新版本"
+    : dirty
+      ? "取消修改"
+      : "重新加载";
+  const status = $("#prompt-editor-status");
+  status.classList.toggle("error", Boolean(editor?.error));
+  let message = editor?.message || (dirty ? "有未保存的修改。" : "");
+  if (editor?.pending === "saving") message = "正在保存提示词…";
+  else if (editor?.pending === "loading") message = "正在加载提示词…";
+  else if (editor?.data && !valid) message = "此范围已从配置移除。可复制草稿后切换范围。";
+  if (status.textContent !== message) status.textContent = message;
+  if (editor?.review) {
+    const review = $("#prompt-review-text");
+    const latest = savedPrompt(editor) || "未设置提示词";
+    if (review.textContent !== latest) review.textContent = latest;
+  }
+}
+
+async function loadPromptEditor() {
+  const editor = state.promptEditor;
+  if (!editor || editor.pending) return;
+  const draft = editor.conflict ? $("#agent-prompt").value : null;
+  editor.pending = "loading";
+  editor.error = false;
+  renderPromptEditor();
+  try {
+    const data = await api("/api/automation/prompts");
+    if (editor !== state.promptEditor) return;
+    editor.data = data;
+    editor.conflict = false;
+    editor.review = draft !== null;
+    $("#agent-prompt").value = draft ?? savedPrompt(editor);
+    editor.message = editor.review
+      ? "请对照已保存的文本，再决定是否保存上方的草稿。"
+      : "";
+    renderPromptOptions();
+  } catch (error) {
+    if (editor !== state.promptEditor) return;
+    editor.error = true;
+    editor.message = error.message;
+  } finally {
+    editor.pending = "";
+    if (editor === state.promptEditor) renderControls();
+  }
+}
+
+async function savePromptEditor() {
+  const editor = state.promptEditor;
+  if (!validPromptScope(editor) || editor.pending || editor.conflict || !promptDirty())
+    return;
+  const prompt = $("#agent-prompt").value;
+  if (editor.scope !== "friend" && !prompt.trim()) {
+    editor.error = true;
+    editor.message = "请填写提示词。";
+    renderPromptEditor();
+    return;
+  }
+  editor.pending = "saving";
+  editor.error = false;
+  renderPromptEditor();
+  try {
+    const data = await api("/api/automation/prompts", {
+      method: "PATCH",
+      body: {
+        scope: editor.scope,
+        key: editor.key,
+        prompt,
+        expected_revision: editor.data.revision,
+      },
+    });
+    if (editor !== state.promptEditor) return;
+    editor.data = data;
+    editor.review = false;
+    editor.message = "提示词已保存，下一条来信将使用新规则。";
+    $("#agent-prompt").value = savedPrompt(editor);
+    refreshAutomation().catch(() => {
+      /* The regular status poll will retry. */
+    });
+  } catch (error) {
+    if (editor !== state.promptEditor) return;
+    editor.error = true;
+    editor.conflict = error.status === 409;
+    editor.review = false;
+    editor.message = editor.conflict
+      ? `${error.message} 草稿已保留。查看最新版本后可继续保存。`
+      : error.message;
+  } finally {
+    editor.pending = "";
+    if (editor === state.promptEditor) renderControls();
+  }
 }
 
 function markDirty() {
@@ -147,13 +326,25 @@ function applyAutomation(
   )
     return;
   state.automation = payload;
-  if (fileMode() || adoptDraft || (!state.dirty && !preserveDraft)) {
-    state.selected = new Set(
-      (fileMode() ? payload.configured_ids || [] : payload.selected_ids || []).map(String),
-    );
-    $("#agent-prompt").value = payload.prompt || "";
-    state.editRevision = payload.revision;
+  if (fileMode()) {
+    state.selected = new Set((payload.configured_ids || []).map(String));
     state.dirty = false;
+    if (!$("#prompt-scope")) {
+      $("#agent-prompt").value = payload.prompt || "";
+    } else if (!state.promptEditor) {
+      state.promptEditor = { scope: "global", key: "", data: null };
+      $("#agent-prompt").value = "";
+      if (!$("#app-shell").hidden) loadPromptEditor();
+    }
+    renderPromptOptions();
+  } else {
+    state.promptEditor = null;
+    if (adoptDraft || (!state.dirty && !preserveDraft)) {
+      state.selected = new Set((payload.selected_ids || []).map(String));
+      $("#agent-prompt").value = payload.prompt || "";
+      state.editRevision = payload.revision;
+      state.dirty = false;
+    }
   }
   const loginUrl = safeLoginUrl(
     payload.login_url || state.settings.bridge_login_url,
@@ -172,6 +363,7 @@ function renderControls() {
   const automation = state.automation || {};
   const running = Boolean(automation.running);
   const managed = fileMode();
+  const editablePrompts = managed && Boolean(state.promptEditor);
   const paused = Array.isArray(automation.paused_ids)
     ? automation.paused_ids.length
     : 0;
@@ -194,7 +386,7 @@ function renderControls() {
       waiting: "正在等待 NapCat 连接与 QQ 登录；可随时点击停止。",
       starting: "正在核对 QQ 账号和配置中的好友范围；可随时点击停止。",
       running: running
-        ? "正在按配置文件自动回复。修改配置或恢复人工接管的好友需重启。"
+        ? "正在自动回复。恢复已人工接管的好友需重启。"
         : "自动回复已暂停。请核对 QQ 和最近状态，修改配置后重启。",
       stopped: "已停止。本次运行不会自动恢复；需要继续时关闭终端并重新启动。",
       failed: automation.startup_error || "自动启动失败，请检查配置后重启。",
@@ -218,37 +410,52 @@ function renderControls() {
   $("#start-automation").hidden = managed;
   $("#settings-panel").hidden = managed;
   $("#clear-selection").hidden = managed;
-  $("#agent-prompt").readOnly = managed;
   $("#config-notice").hidden = !managed;
   $("#config-notice").textContent = managed
-    ? `配置来自 ${automation.config_file}，修改文件并重启后生效。${description}`
+    ? `代聊范围来自 ${automation.config_file}。${description}`
     : "";
-  $("#page-intro").textContent = managed
-    ? "按配置文件自动运行。这里可以查看状态、登录 QQ 和停止。"
-    : "登录 QQ，勾选好友，写好提示词，然后开始。";
+  $("#page-intro").textContent = editablePrompts
+    ? "查看运行状态、编辑提示词、登录 QQ 或停止代聊。"
+    : managed
+      ? "查看运行状态、登录 QQ 或停止代聊。"
+      : "登录 QQ，勾选好友，写好提示词，然后开始。";
   $("#friends-title").textContent = managed ? "配置中的代聊好友" : "选择代聊好友";
   $("#friend-search").placeholder = managed
     ? "搜索昵称、QQ 号或分组"
     : "搜索昵称或 QQ 号";
-  $("#prompt-title").textContent = managed ? "全局提示词" : "告诉 QEcho 怎么聊";
-  $(".prompt-card .card-heading .quiet-label").textContent = managed
-    ? "所有代聊好友的基础规则"
-    : "统一应用于所选好友";
+  const scope = state.promptEditor?.scope || "global";
+  const scopeLabels = {
+    global: "全局提示词",
+    group: "分组提示词",
+    friend: "好友专属提示词",
+  };
+  const scopeHelp = {
+    global: "全局规则适用于所有代聊好友。",
+    group: "分组提示词补充全局规则。",
+    friend: "清空并保存后，继承全局和分组规则。",
+  };
+  $("#prompt-title").textContent = editablePrompts
+    ? "提示词"
+    : managed ? "全局提示词" : "告诉 QEcho 怎么聊";
+  $(".prompt-card .card-heading .quiet-label").textContent = editablePrompts
+    ? "保存后立即生效"
+    : managed ? "所有代聊好友的基础规则" : "统一应用于所选好友";
   $("label[for='agent-prompt']").textContent = managed
-    ? "全局提示词"
+    ? scopeLabels[scope]
     : "Agent 提示词";
-  $("#agent-prompt").placeholder = managed
-    ? "配置文件未设置全局提示词"
-    : defaultPromptPlaceholder;
-  $("#prompt-help").textContent = managed
-    ? "配置中的分组和专属提示词会补充全局规则，修改文件后重启生效。"
-    : "人格、语气、称呼、话题和边界，都可以写在这里。";
+  $("#agent-prompt").placeholder = editablePrompts
+    ? `输入${scopeLabels[scope]}`
+    : managed ? "未设置全局提示词" : defaultPromptPlaceholder;
+  $("#prompt-help").textContent = editablePrompts
+    ? scopeHelp[scope]
+    : managed ? "刷新页面后可编辑提示词。" : "人格、语气、称呼、话题和边界，都可以写在这里。";
   $("#recent-note").textContent = managed
     ? "本人主动回复会接管该好友；停止后需重新启动 QEcho 才能恢复代聊。"
     : "本人主动回复会接管该好友；“停止”会暂停全部代聊。再次开始会按当前选择重新启用。";
   $("#model-notice").textContent = managed
     ? "请在配置文件填写真实模型地址和名称，再重启。"
     : "还未配置真实模型。展开下方连接设置，填写模型地址和名称。";
+  renderPromptEditor();
   // Stop intentionally stays enabled, even while a start request is in flight.
 }
 
@@ -511,6 +718,7 @@ async function enterApp() {
   state.friends = [];
   state.friendsFingerprint = state.recentFingerprint = "";
   state.setup = null;
+  state.promptEditor = null;
   $("#qq-settings").open = false;
   $("#settings-panel").open = false;
   renderSettings();
@@ -521,6 +729,7 @@ async function enterApp() {
   $("#connection-message").classList.remove("error");
   $("#auth-screen").hidden = true;
   $("#app-shell").hidden = false;
+  if (state.promptEditor) loadPromptEditor();
   // One quiet check recognizes an already-logged-in bridge; repeated login checks
   // only begin after the user opens the QQ login page.
   syncFriends({ silent: true });
@@ -561,7 +770,7 @@ $("#auth-form").addEventListener("submit", async (event) => {
 
 $("#logout").addEventListener("click", () => {
   if (
-    (state.dirty || state.settingsDirty) &&
+    (state.dirty || state.settingsDirty || promptDirty()) &&
     !window.confirm("有未应用的修改，确认退出？")
   )
     return;
@@ -597,7 +806,47 @@ $("#clear-selection").addEventListener("click", () => {
   markDirty();
   renderFriends();
 });
-$("#agent-prompt").addEventListener("input", markDirty);
+$("#agent-prompt").addEventListener("input", () => {
+  const editor = state.promptEditor;
+  if (!editor) {
+    markDirty();
+    return;
+  }
+  if (!editor.conflict) {
+    editor.message = "";
+    editor.error = false;
+  }
+  renderControls();
+});
+
+$("#prompt-scope")?.addEventListener("change", (event) => {
+  const editor = state.promptEditor;
+  if (!editor?.data || editor.pending || editor.conflict || !event.target.value) return;
+  if (promptDirty() && !window.confirm("切换范围会放弃当前草稿，继续切换？")) {
+    event.target.value = JSON.stringify([editor.scope, editor.key]);
+    return;
+  }
+  [editor.scope, editor.key] = JSON.parse(event.target.value);
+  $("#agent-prompt").value = savedPrompt(editor);
+  editor.review = editor.error = false;
+  editor.message = "";
+  renderPromptOptions();
+  renderControls();
+});
+
+$("#reload-prompt")?.addEventListener("click", () => {
+  const editor = state.promptEditor;
+  if (!editor || editor.pending) return;
+  if (editor.conflict || !promptDirty()) {
+    loadPromptEditor();
+    return;
+  }
+  $("#agent-prompt").value = savedPrompt(editor);
+  editor.review = editor.error = false;
+  editor.message = "";
+  renderControls();
+});
+$("#save-prompt")?.addEventListener("click", savePromptEditor);
 
 $("#start-automation").addEventListener("click", async () => {
   if (state.startPending) return;
@@ -736,7 +985,7 @@ $("#copy-webhook-token").addEventListener("click", () =>
   copyInput("#webhook-token"),
 );
 window.addEventListener("beforeunload", (event) => {
-  if (state.dirty || state.settingsDirty) {
+  if (state.dirty || state.settingsDirty || promptDirty()) {
     event.preventDefault();
     event.returnValue = "";
   }

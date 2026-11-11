@@ -1,5 +1,11 @@
 # 验证记录
 
+## 网页提示词即时保存（2026-11-11）
+
+本机完整回归 333 项通过，1 项平台相关测试跳过。Ruff、JavaScript 语法和样例 TOML 校验通过。[Windows 与 Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42986129245)
+
+使用模拟 QQ 和模型验证三层提示词保存后进入下一条模型请求，旧版本生成中的回复不发送，等待登录和核验好友期间保存的规则在启用时保留。同一文件基准重启恢复保存值，修改文件规则后采用文件值。浏览器验证代聊运行中保存、刷新恢复文本，以及遇到另一页面保存时保留草稿并核对最新版。真实 QQ 收发和真实模型效果需部署后验证。
+
 ## 提示词分组与好友个人提示词（2026-11-11）
 
 macOS 本机完整回归 326 项通过，1 项平台相关测试跳过。Ruff 检查、JavaScript 语法和样例 TOML 校验通过。[Windows 与 Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42983070200)

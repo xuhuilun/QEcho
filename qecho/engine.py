@@ -121,15 +121,22 @@ class Engine:
         contact = self.store.get_contact(contact_id)
         details = [settings["global_prompt"]]
         if self._prompt_config is not None:
-            group = self._prompt_config.group_for(contact["qq_id"])
-            personal = self._prompt_config.friend_prompts.get(contact["qq_id"])
-            if group is not None or personal:
+            qq_id = contact["qq_id"]
+            group = self._prompt_config.group_for(qq_id)
+            snapshot = settings.get("file_prompts")
+            if snapshot is None:
+                group_prompt = group.prompt if group is not None else None
+                personal = self._prompt_config.friend_prompts.get(qq_id)
+            else:
+                group_prompt = snapshot["groups"].get(group.name) if group is not None else None
+                personal = snapshot["friend_prompts"].get(qq_id)
+            if group_prompt or personal:
                 details.append(
                     "全局约束始终适用。称呼、语气和表达风格等偏好冲突时，"
                     "优先采用好友个人提示词，其次采用分组提示词，最后采用全局偏好。"
                 )
-                if group is not None:
-                    details.append(f"【分组提示词】\n{group.prompt}")
+                if group_prompt:
+                    details.append(f"【分组提示词】\n{group_prompt}")
                 if personal:
                     details.append(f"【好友个人提示词】\n{personal}")
         attributes = [

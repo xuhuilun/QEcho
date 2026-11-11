@@ -108,7 +108,7 @@ class Store:
             )
         return self.get_settings()
 
-    def import_file_settings(self, patch, *, file_prompt_rules=False):
+    def import_file_settings(self, patch, *, file_prompt_rules=False, file_prompts=None):
         """Apply a complete file-owned configuration while preserving runtime identity."""
         values = SettingsPatch.model_validate(patch).model_dump(
             exclude_none=True, exclude_unset=True
@@ -132,6 +132,17 @@ class Store:
                 simple_mode=True,
                 revision=settings["revision"] + 1,
             )
+            saved_prompts = settings.get("file_prompts")
+            if file_prompts is not None:
+                if saved_prompts is None:
+                    saved_prompts = file_prompts
+                elif saved_prompts["source"] != file_prompts["source"]:
+                    saved_prompts = file_prompts | {"revision": saved_prompts["revision"] + 1}
+                settings["file_prompts"] = saved_prompts
+                settings["global_prompt"] = saved_prompts["global_prompt"]
+                file_prompt_rules = bool(saved_prompts["groups"] or saved_prompts["friend_prompts"])
+            else:
+                settings.pop("file_prompts", None)
             if file_prompt_rules:
                 settings["file_prompt_rules"] = True
             else:
@@ -147,6 +158,45 @@ class Store:
                 "UPDATE messages SET status='cancelled',error='已导入文件配置，旧未发送任务已取消' WHERE status IN ('received','processing','generating','draft')"
             )
         return self.get_settings()
+
+    def update_file_prompt(self, scope, key, prompt, expected_revision):
+        """Save an effective prompt and invalidate replies under its old revision."""
+        prompt = prompt.strip()
+        with self._lock, self.db:
+            settings = DEFAULT_SETTINGS | json.loads(
+                self.db.execute("SELECT data FROM settings WHERE id=1").fetchone()[0]
+            )
+            snapshot = settings.get("file_prompts")
+            if snapshot is None:
+                raise ValueError("当前没有可编辑的文件提示词")
+            if snapshot["revision"] != expected_revision:
+                raise ValueError("提示词已被修改，请刷新后重试")
+            if scope == "global" and prompt:
+                snapshot["global_prompt"] = prompt
+            elif scope == "group" and key in snapshot["groups"] and prompt:
+                snapshot["groups"][key] = prompt
+            elif scope == "friend":
+                if prompt:
+                    snapshot["friend_prompts"][key] = prompt
+                else:
+                    snapshot["friend_prompts"].pop(key, None)
+            else:
+                raise ValueError("全局和分组提示词不能为空，分组必须来自当前配置")
+            snapshot["revision"] += 1
+            settings["global_prompt"] = snapshot["global_prompt"]
+            if snapshot["groups"] or snapshot["friend_prompts"]:
+                settings["file_prompt_rules"] = True
+            else:
+                settings.pop("file_prompt_rules", None)
+            if settings["enabled"]:
+                # A paused file run has no reply work. Keep its in-progress
+                # account and friend validation independent of text edits.
+                settings["revision"] += 1
+                self.db.execute(
+                    "UPDATE messages SET status='cancelled',error='提示词已更新，旧未发送任务已取消' WHERE status IN ('received','processing','generating','draft')"
+                )
+            self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
+        return snapshot
 
     def list_contacts(self):
         with self._lock:
@@ -478,7 +528,7 @@ class Store:
                 )
             settings.update(
                 qq_self_id=account_id,
-                global_prompt=prompt,
+                global_prompt=settings["global_prompt"] if prompt is None else prompt,
                 simple_mode=True,
                 enabled=True,
                 revision=settings["revision"] + 1,
