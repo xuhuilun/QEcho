@@ -21,6 +21,7 @@ from .schemas import (
     AutomationStartInput,
     ContactCreate,
     ContactPatch,
+    FilePromptInput,
     SendInput,
     SettingsPatch,
     SimulationInput,
@@ -69,19 +70,23 @@ def create_app(
     )
     prompt_config = file_config.agent if file_config else None
     configured_ids = []
-    friend_prompt_profiles = {}
-    if prompt_config:
+    group_names = {}
+    file_prompts = None
+    if file_config and prompt_config:
         configured_ids = prompt_config.configured_friends
         group_names = {
             qq_id: group.name for group in prompt_config.prompt_groups for qq_id in group.friends
         }
-        friend_prompt_profiles = {
-            qq_id: {
-                "group": group_names.get(qq_id),
-                "has_personal_prompt": qq_id in prompt_config.friend_prompts,
-            }
-            for qq_id in configured_ids
+        file_prompts = {
+            "global_prompt": prompt_config.prompt,
+            "groups": {group.name: group.prompt for group in prompt_config.prompt_groups},
+            "friend_prompts": dict(prompt_config.friend_prompts),
         }
+        source = json.dumps(
+            [str(file_config.source_path), sorted(configured_ids), group_names, file_prompts],
+            sort_keys=True,
+        )
+        file_prompts.update(source=hashlib.sha256(source.encode()).hexdigest(), revision=1)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -111,9 +116,7 @@ def create_app(
             if file_config:
                 store.import_file_settings(
                     file_config.settings_patch(),
-                    file_prompt_rules=bool(
-                        file_config.agent.prompt_groups or file_config.agent.friend_prompts
-                    ),
+                    file_prompts=file_prompts,
                 )
             else:
                 store.prepare_web_mode()
@@ -173,16 +176,25 @@ def create_app(
             file_config
             and request.method not in {"GET", "HEAD"}
             and request.url.path not in {"/api/qq/sync", "/api/automation/stop"}
+            and (request.method, request.url.path) != ("PATCH", "/api/automation/prompts")
         ):
             raise HTTPException(409, "当前使用配置文件，请编辑配置并重启 QEcho 后生效")
 
     def automation_state(payload: dict | None = None) -> dict:
         state = payload if payload is not None else application.state.simple.status()
+        personal = (
+            application.state.store.get_settings()["file_prompts"]["friend_prompts"]
+            if file_config
+            else {}
+        )
         return state | {
             "config_source": "file" if file_config else "web",
             "config_file": file_config.source_path.name if file_config else "",
             "configured_ids": configured_ids,
-            "friend_prompt_profiles": friend_prompt_profiles,
+            "friend_prompt_profiles": {
+                qq_id: {"group": group_names.get(qq_id), "has_personal_prompt": qq_id in personal}
+                for qq_id in configured_ids
+            },
             "startup_state": application.state.startup.state if file_config else "manual",
             "startup_error": application.state.startup.error if file_config else "",
         }
@@ -199,6 +211,8 @@ def create_app(
         )
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     @application.exception_handler(KeyError)
@@ -226,11 +240,15 @@ def create_app(
 
     @application.get("/api/settings", dependencies=[Depends(admin)])
     async def settings():
-        return application.state.store.get_settings()
+        values = application.state.store.get_settings()
+        values.pop("file_prompts", None)
+        return values
 
     @application.patch("/api/settings", dependencies=[Depends(admin)])
     async def update_settings(body: SettingsPatch):
-        return application.state.store.update_settings(body.model_dump(exclude_unset=True))
+        values = application.state.store.update_settings(body.model_dump(exclude_unset=True))
+        values.pop("file_prompts", None)
+        return values
 
     @application.get("/api/setup", dependencies=[Depends(admin)])
     async def setup():
@@ -243,6 +261,34 @@ def create_app(
     @application.get("/api/automation", dependencies=[Depends(admin)])
     async def automation():
         return automation_state()
+
+    def public_prompts(snapshot: dict) -> dict:
+        return {
+            name: snapshot[name]
+            for name in ("revision", "global_prompt", "groups", "friend_prompts")
+        }
+
+    @application.get("/api/automation/prompts", dependencies=[Depends(admin)])
+    async def get_prompts():
+        if not file_config:
+            raise HTTPException(409, "此提示词编辑接口用于文件配置模式")
+        return public_prompts(application.state.store.get_settings()["file_prompts"])
+
+    @application.patch("/api/automation/prompts", dependencies=[Depends(admin)])
+    async def save_prompt(body: FilePromptInput):
+        if not file_config:
+            raise HTTPException(409, "此提示词编辑接口用于文件配置模式")
+        if body.scope == "global" and body.key:
+            raise HTTPException(422, "全局提示词无需指定对象")
+        if body.scope == "friend" and body.key not in configured_ids:
+            raise HTTPException(409, "该好友未列入配置文件的代聊范围")
+        if body.scope != "friend" and not body.prompt:
+            raise HTTPException(422, "全局和分组提示词不能为空")
+        return public_prompts(
+            application.state.store.update_file_prompt(
+                body.scope, body.key, body.prompt, body.expected_revision
+            )
+        )
 
     @application.post("/api/qq/sync", dependencies=[Depends(admin)])
     async def sync_qq():

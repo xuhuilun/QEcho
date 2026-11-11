@@ -52,9 +52,11 @@ class ObservedService(SimpleService):
         self.sync_calls += 1
         return await super().sync()
 
-    async def start(self, qq_ids, prompt, expected_revision):
+    async def start(self, qq_ids, prompt, expected_revision, *, keep_current_prompt=False):
         self.start_calls += 1
-        return await super().start(qq_ids, prompt, expected_revision)
+        return await super().start(
+            qq_ids, prompt, expected_revision, keep_current_prompt=keep_current_prompt
+        )
 
 
 def config(auto_start=True, friends=None):
@@ -76,6 +78,7 @@ def setup(tmp_path):
             "model_mode": "live",
             "model_base_url": "https://provider.example/v1",
             "model_name": "chat",
+            "global_prompt": "严格使用文件中的聊天规则",
             "reply_delay_seconds": 0,
         }
     )

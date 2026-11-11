@@ -139,3 +139,10 @@ class AutomationStartInput(InputModel):
         if len(set(normalized)) != len(normalized):
             raise ValueError("好友选择不能重复")
         return normalized
+
+
+class FilePromptInput(InputModel):
+    scope: Literal["global", "group", "friend"]
+    key: str = Field(max_length=100)
+    prompt: str = Field(max_length=20000)
+    expected_revision: int = Field(ge=1, strict=True)

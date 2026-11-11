@@ -132,15 +132,35 @@
               </div>
               <span class="quiet-label">统一应用于所选好友</span>
             </div>
+            <div id="prompt-scope-field" class="prompt-scope-field" hidden>
+              <label for="prompt-scope">编辑范围</label>
+              <select id="prompt-scope"></select>
+            </div>
             <label class="sr-only" for="agent-prompt">Agent 提示词</label>
             <textarea
               id="agent-prompt"
               maxlength="20000"
+              aria-describedby="prompt-help prompt-editor-status"
               placeholder="写下你希望 QEcho 呈现的人格、语气和聊天规则。&#10;&#10;例如：像平时的我一样聊天，真诚、轻松，回复简短一点。和对方聊喜欢的音乐和日常，不要连续追问。不知道我的安排时，不要替我答应。"
             ></textarea>
             <div class="prompt-footnote">
               <span id="prompt-help">人格、语气、称呼、话题和边界，都可以写在这里。</span
               ><span id="prompt-count">0 字</span>
+            </div>
+            <div id="prompt-editor-actions" class="prompt-editor-actions" hidden>
+              <p id="prompt-editor-status" role="status"></p>
+              <div class="prompt-editor-buttons">
+                <button id="reload-prompt" class="button small" type="button">
+                  重新加载
+                </button>
+                <button id="save-prompt" class="button small primary" type="button">
+                  保存提示词
+                </button>
+              </div>
+            </div>
+            <div id="prompt-review" class="prompt-review" hidden>
+              <p>当前已保存的提示词</p>
+              <pre id="prompt-review-text"></pre>
             </div>
             <div id="model-notice" class="model-notice" hidden>
               还未配置真实模型。展开下方连接设置，填写模型地址和名称。

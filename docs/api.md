@@ -22,11 +22,13 @@
 
 使用 `qecho.toml` 时，状态增加 `config_source="file"`、`config_file`（仅文件名）、`configured_ids`（默认组与自定义组的计划名单）、`startup_state` 和 `startup_error`。`selected_ids` 表示已生效授权，等待期间可为空。`friend_prompt_profiles` 按配置中的 QQ 号索引，包含 `group`（组名，默认组为 `null`）和布尔字段 `has_personal_prompt`。状态中的 `prompt` 是全局提示词。QQ 同步和停止也返回这些状态字段。网页模式为 `config_source="web"`、`startup_state="manual"`，`friend_prompt_profiles` 为空对象。
 
-管理员可通过 `GET /api/contacts/{contact_id}/prompt` 核对该联系人的实际系统消息，包含全局提示词及匹配的分组、个人提示词。只读状态接口返回分组与个人配置标记，具体规则保存在配置文件中。
+管理员可通过 `GET /api/contacts/{contact_id}/prompt` 核对该联系人的实际系统消息，包含全局提示词及匹配的分组、个人提示词。
+
+文件模式的 `GET /api/automation/prompts` 返回当前生效文本，包含 `revision`、`global_prompt`、`groups`（组名到文本）和 `friend_prompts`（QQ 号到文本）。`PATCH /api/automation/prompts` 保存单项提示词并返回同样结构。请求体包含 `scope`（`global`、`group` 或 `friend`）、`key`（全局为空字符串，其余为组名或 QQ 号）、`prompt` 和 `expected_revision`。好友提示词为空时移除个人规则。版本过期、组不存在或好友不在授权范围时返回 409。保存即时生效，取消尚未开始发送的旧回复，保留运行状态和好友范围。
 
 启动状态为 `disabled`（未开启自动启动）、`waiting`（等待桥接和登录）、`starting`（核验账号/好友）、`running`（已成功启动）、`stopped`（本轮已停止）、`failed`（需修正并重启）。实际是否仍在自动回复以 `running` 布尔值为准，启动状态记录协调任务的结果。
 
-文件模式允许已认证的所有 GET、`POST /api/qq/sync`、`POST /api/automation/stop`。其他管理写请求统一返回 409，包括 settings、联系人、消息清理/发送/取消/重新生成/演练、任意名单开始请求；错误提示编辑文件并重启。事件入口不受该管理写限制，仍使用独立事件认证。
+文件模式允许已认证的所有 GET、`POST /api/qq/sync`、`POST /api/automation/stop` 和 `PATCH /api/automation/prompts`。其他管理写请求返回 409。事件入口仍使用独立事件认证。
 
 同步与后台启动串行执行，停止独立提交暂停和版本屏障并取消启动任务，无需等待网络。停止后不能通过开始 API 恢复，重新启动进程才会重新执行文件计划。配置优先级和密钥留空行为见[配置文件使用说明](file-configuration.md)。
 
