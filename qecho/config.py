@@ -3,7 +3,7 @@
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -131,19 +131,57 @@ class QQConfig(_Section):
         return _access_token(value)
 
 
+def _friend_ids(values: list[str]) -> list[str]:
+    values = [validate_qq(value.strip()) for value in values]
+    if len(set(values)) != len(values):
+        raise ValueError("duplicate_friends")
+    return values
+
+
+_PromptText = Annotated[str, Field(min_length=1, max_length=20000)]
+
+
+class PromptGroupConfig(_Section):
+    name: str = Field(min_length=1, max_length=100)
+    friends: list[str] = Field(default_factory=list, max_length=500)
+    prompt: _PromptText
+
+    @field_validator("friends")
+    @classmethod
+    def recipient_scope(cls, values):
+        return _friend_ids(values)
+
+
 class AgentConfig(_Section):
     friends: list[str] = Field(default_factory=list, max_length=500)
     prompt: str = Field(default=DEFAULT_PROMPT, max_length=20000)
     auto_start: bool = False
     reply_delay_seconds: float = Field(default=2.0, ge=0, le=60)
+    prompt_groups: list[PromptGroupConfig] = Field(default_factory=list)
+    friend_prompts: dict[str, _PromptText] = Field(default_factory=dict)
 
     @field_validator("friends")
     @classmethod
     def recipient_scope(cls, values):
-        values = [validate_qq(value.strip()) for value in values]
-        if len(set(values)) != len(values):
-            raise ValueError("duplicate_friends")
+        return _friend_ids(values)
+
+    @field_validator("friend_prompts", mode="before")
+    @classmethod
+    def personal_prompt_keys(cls, values):
+        if isinstance(values, dict):
+            # Validate original keys before Pydantic trims them and can merge entries.
+            for qq_id in values:
+                if not isinstance(qq_id, str):
+                    raise ValueError("invalid_friend_prompt_key")
+                validate_qq(qq_id)
         return values
+
+    @property
+    def configured_friends(self) -> list[str]:
+        return self.friends + [qq_id for group in self.prompt_groups for qq_id in group.friends]
+
+    def group_for(self, qq_id: str) -> PromptGroupConfig | None:
+        return next((group for group in self.prompt_groups if qq_id in group.friends), None)
 
 
 class _Document(_Section):
@@ -207,22 +245,37 @@ def load_config(path: str | Path) -> FileConfig:
         errors = []
         for error in exc.errors(include_input=False, include_context=False, include_url=False):
             location = error["loc"]
-            if error["type"] == "extra_forbidden":
+            if location[:2] == ("agent", "friend_prompts"):
+                # Dictionary keys are user data, including otherwise valid QQ numbers.
+                location = location[:2]
+            elif error["type"] == "extra_forbidden":
                 # A pasted credential can itself become an unknown TOML key.
                 location = (*location[:-1], "unknown_field")
             field = ".".join(str(part) for part in location) or "config"
             errors.append(f"{field}: {error['type']}")
         raise ConfigError("配置字段无效：" + "; ".join(errors)) from None
-    if validated.agent.auto_start:
+    agent = validated.agent
+    group_names = {group.name for group in agent.prompt_groups}
+    if len(group_names) != len(agent.prompt_groups):
+        raise ConfigError("agent.prompt_groups: duplicate_names")
+    configured_friends = agent.configured_friends
+    authorized = set(configured_friends)
+    if len(authorized) != len(configured_friends):
+        raise ConfigError("agent.prompt_groups: duplicate_friends_across_groups")
+    if len(configured_friends) > 500:
+        raise ConfigError("agent.friends: too_many_configured_friends")
+    if not agent.friend_prompts.keys() <= authorized:
+        raise ConfigError("agent.friend_prompts: friend_not_in_configured_scope")
+    if agent.auto_start:
         if (
             validated.model.mode != "live"
             or not validated.model.base_url
             or not validated.model.name
         ):
             raise ConfigError("agent.auto_start: requires_live_model")
-        if not validated.agent.friends:
+        if not configured_friends:
             raise ConfigError("agent.friends: required_for_auto_start")
-        if not validated.agent.prompt:
+        if not agent.prompt:
             raise ConfigError("agent.prompt: required_for_auto_start")
     result = FileConfig(source, validated.server, validated.model, validated.qq, validated.agent)
     try:

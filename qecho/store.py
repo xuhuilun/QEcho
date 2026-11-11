@@ -108,7 +108,7 @@ class Store:
             )
         return self.get_settings()
 
-    def import_file_settings(self, patch):
+    def import_file_settings(self, patch, *, file_prompt_rules=False):
         """Apply a complete file-owned configuration while preserving runtime identity."""
         values = SettingsPatch.model_validate(patch).model_dump(
             exclude_none=True, exclude_unset=True
@@ -132,6 +132,10 @@ class Store:
                 simple_mode=True,
                 revision=settings["revision"] + 1,
             )
+            if file_prompt_rules:
+                settings["file_prompt_rules"] = True
+            else:
+                settings.pop("file_prompt_rules", None)
             self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
             for row in self.db.execute("SELECT id,data FROM contacts").fetchall():
                 contact = json.loads(row[1])
@@ -376,7 +380,11 @@ class Store:
                 for row in rows
             ]
 
-    def pause_automation(self, expected_revision=None):
+    def prepare_web_mode(self):
+        """Pause saved automation that depends on rules loaded from a file."""
+        return self.pause_automation(only_if_file_prompt_rules=True)
+
+    def pause_automation(self, expected_revision=None, *, only_if_file_prompt_rules=False):
         """Commit a stop barrier without waiting for a model or a conversation lock."""
         with self._lock, self.db:
             settings = DEFAULT_SETTINGS | json.loads(
@@ -384,6 +392,8 @@ class Store:
             )
             if expected_revision is not None and settings["revision"] != expected_revision:
                 raise ValueError("配置已变化，请刷新后重新开始")
+            if only_if_file_prompt_rules and not settings.pop("file_prompt_rules", False):
+                return self.get_settings()
             settings.update(enabled=False, revision=settings["revision"] + 1)
             self.db.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(settings),))
             self.db.execute(

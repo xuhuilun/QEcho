@@ -1,6 +1,7 @@
 "use strict";
 
 const $ = (selector) => document.querySelector(selector);
+const defaultPromptPlaceholder = $("#agent-prompt").placeholder;
 const state = {
   token: sessionStorage.getItem("qecho.adminToken") || "",
   automation: null,
@@ -226,8 +227,21 @@ function renderControls() {
     ? "按配置文件自动运行。这里可以查看状态、登录 QQ 和停止。"
     : "登录 QQ，勾选好友，写好提示词，然后开始。";
   $("#friends-title").textContent = managed ? "配置中的代聊好友" : "选择代聊好友";
+  $("#friend-search").placeholder = managed
+    ? "搜索昵称、QQ 号或分组"
+    : "搜索昵称或 QQ 号";
+  $("#prompt-title").textContent = managed ? "全局提示词" : "告诉 QEcho 怎么聊";
+  $(".prompt-card .card-heading .quiet-label").textContent = managed
+    ? "所有代聊好友的基础规则"
+    : "统一应用于所选好友";
+  $("label[for='agent-prompt']").textContent = managed
+    ? "全局提示词"
+    : "Agent 提示词";
+  $("#agent-prompt").placeholder = managed
+    ? "配置文件未设置全局提示词"
+    : defaultPromptPlaceholder;
   $("#prompt-help").textContent = managed
-    ? "提示词从配置文件读取，修改后重启生效。"
+    ? "配置中的分组和专属提示词会补充全局规则，修改文件后重启生效。"
     : "人格、语气、称呼、话题和边界，都可以写在这里。";
   $("#recent-note").textContent = managed
     ? "本人主动回复会接管该好友；停止后需重新启动 QEcho 才能恢复代聊。"
@@ -241,13 +255,23 @@ function renderControls() {
 function renderFriends() {
   const query = $("#friend-search").value.trim().toLowerCase();
   const managed = fileMode();
+  const profiles = state.automation?.friend_prompt_profiles || {};
   const friends = managed
-    ? [...state.selected].map((id) =>
-        state.friends.find((friend) => String(friend.qq_id) === id) || { qq_id: id, name: id },
-      )
+    ? [...state.selected].map((id) => {
+        const friend = state.friends.find((item) => String(item.qq_id) === id);
+        const profile = profiles[id];
+        return {
+          qq_id: id,
+          name: friend?.name || id,
+          promptGroup: profile?.group ?? "全局默认",
+          hasPersonalPrompt: profile?.has_personal_prompt === true,
+        };
+      })
     : state.friends;
   const filtered = friends.filter((friend) =>
-    `${friend.name} ${friend.qq_id}`.toLowerCase().includes(query),
+    `${friend.name} ${friend.qq_id} ${friend.promptGroup || ""}`
+      .toLowerCase()
+      .includes(query),
   );
   const fingerprint = JSON.stringify([
     filtered,
@@ -261,6 +285,9 @@ function renderFriends() {
   list.replaceChildren();
   if (!filtered.length) {
     const empty = node("div", "friends-empty");
+    const searchHint = managed
+      ? "换一个昵称、QQ 号或分组试试。"
+      : "换一个昵称或 QQ 号试试。";
     empty.append(
       node(
         "strong",
@@ -277,7 +304,7 @@ function renderFriends() {
         "span",
         "",
         query
-          ? "换一个昵称或 QQ 号试试。"
+          ? searchHint
           : state.synced
             ? "确认 QQ 好友已加载，再点击同步好友。"
             : "点击上方“登录 QQ”，登录后自动获取好友。",
@@ -306,6 +333,12 @@ function renderFriends() {
       node("strong", "", friend.name || id),
       node("small", "", `QQ ${id}`),
     );
+    if (managed) {
+      const promptProfile = friend.hasPersonalPrompt
+        ? `${friend.promptGroup} · 专属提示词`
+        : friend.promptGroup;
+      copy.append(node("small", "friend-prompt-profile", promptProfile));
+    }
     label.append(checkbox, avatar, copy);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) state.selected.add(id);

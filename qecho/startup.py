@@ -121,7 +121,7 @@ class ConfiguredAutomation:
                         self.error = ""
                         try:
                             await self.simple.start(
-                                list(self.cfg.agent.friends),
+                                list(self.cfg.agent.configured_friends),
                                 self.cfg.agent.prompt,
                                 expected_revision=current["revision"],
                             )

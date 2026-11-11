@@ -26,9 +26,10 @@ class Model:
 
 
 class Bridge:
-    def __init__(self, wait=False):
+    def __init__(self, wait=False, *, friend_ids=("7654321",)):
         self.sent = []
         self.wait = wait
+        self.friend_ids = friend_ids
         self.entered = threading.Event()
         self.cancelled = threading.Event()
 
@@ -43,14 +44,14 @@ class Bridge:
         return "12345678"
 
     async def friends(self, base_url, token):
-        return [{"qq_id": "7654321", "name": "测试好友"}]
+        return [{"qq_id": qq_id, "name": "测试好友"} for qq_id in self.friend_ids]
 
     async def send_private(self, base_url, token, user_id, text):
         self.sent.append((user_id, text))
         return str(9000 + len(self.sent))
 
 
-def config(tmp_path, auto_start=True):
+def config(tmp_path, auto_start=True, *, default_ids=("7654321",), prompt_sections=""):
     path = tmp_path / "qecho.toml"
     path.write_text(
         f'''[server]
@@ -65,10 +66,11 @@ api_url = "http://bridge.invalid:3000"
 api_token = "file-bridge-key"
 event_token = "{EVENT}"
 [agent]
-friends = ["7654321"]
+friends = {json.dumps(default_ids)}
 prompt = "从文件读取的语气和聊天规则"
 auto_start = {str(auto_start).lower()}
 reply_delay_seconds = 0
+{prompt_sections}
 ''',
         encoding="utf-8",
     )
@@ -134,6 +136,103 @@ def test_complete_file_start_needs_no_web_configuration(tmp_path, monkeypatch):
         assert len(bridge.sent) == 1
     assert (tmp_path / "state/qecho.sqlite3").exists()
     assert not (tmp_path / "wrong-state").exists()
+
+
+PROMPT_GROUPS = """
+[[agent.prompt_groups]]
+name = "亲近好友"
+friends = ["7654322", "7654323"]
+prompt = "这一组使用轻松语气。"
+
+[[agent.prompt_groups]]
+name = "同学"
+friends = ["7654324"]
+prompt = "这一组用简洁语气。"
+
+[agent.friend_prompts]
+"7654322" = "只有这位好友用昵称小林。"
+"""
+
+
+def test_group_and_individual_prompts_reach_only_the_matching_friend(tmp_path):
+    cfg = config(tmp_path, prompt_sections=PROMPT_GROUPS)
+    allowed = ("7654321", "7654322", "7654323", "7654324")
+    model, bridge = Model(), Bridge(friend_ids=(*allowed, "7654325"))
+    with TestClient(create_app(model_client=model, bridge_client=bridge, file_config=cfg)) as api:
+        state = status_until(api, "running")
+        assert state["configured_ids"] == list(allowed)
+        assert set(state["selected_ids"]) == set(allowed)
+        assert state["friend_prompt_profiles"] == {
+            "7654321": {"group": None, "has_personal_prompt": False},
+            "7654322": {"group": "亲近好友", "has_personal_prompt": True},
+            "7654323": {"group": "亲近好友", "has_personal_prompt": False},
+            "7654324": {"group": "同学", "has_personal_prompt": False},
+        }
+        assert "只有这位好友用昵称小林。" not in json.dumps(state, ensure_ascii=False)
+        for message_id, qq_id in enumerate(allowed, start=1):
+            assert event(api, int(qq_id), message_id).json()["status"] == "accepted"
+        assert event(api, 7654325, 5).json()["status"] == "ignored"
+        assert [qq_id for qq_id, _ in bridge.sent] == list(allowed)
+
+        system = [messages[0]["content"] for messages, _ in model.calls]
+        group, other, personal = (
+            "这一组使用轻松语气。",
+            "这一组用简洁语气。",
+            "只有这位好友用昵称小林。",
+        )
+        assert all(cfg.agent.prompt in prompt for prompt in system)
+        assert all(fragment not in system[0] for fragment in (group, other, personal))
+        assert (
+            system[1].index(cfg.agent.prompt) < system[1].index(group) < system[1].index(personal)
+        )
+        assert other not in system[1]
+        assert group in system[2] and other not in system[2] and personal not in system[2]
+        assert other in system[3] and group not in system[3] and personal not in system[3]
+        contacts = api.get("/api/contacts", headers=AUTH).json()
+        contact = next(item for item in contacts if item["qq_id"] == "7654322")
+        preview = api.get(f"/api/contacts/{contact['id']}/prompt", headers=AUTH).json()
+        assert preview["messages"][0]["content"] == system[1]
+
+
+def test_group_only_start_and_web_reopen_without_rules_stays_paused(tmp_path, monkeypatch):
+    cfg = config(tmp_path, default_ids=(), prompt_sections=PROMPT_GROUPS)
+    allowed = ("7654322", "7654323", "7654324")
+    bridge = Bridge(friend_ids=allowed)
+    with TestClient(create_app(bridge_client=bridge, file_config=cfg)) as api:
+        state = status_until(api, "running")
+        assert state["configured_ids"] == list(allowed)
+        assert set(state["selected_ids"]) == set(allowed)
+
+    monkeypatch.setenv("QECHO_ADMIN_TOKEN", ADMIN)
+    monkeypatch.setenv("QECHO_WEBHOOK_TOKEN", EVENT)
+    model = Model()
+    with TestClient(create_app(cfg.data_directory, model, bridge)) as api:
+        state = status_until(api, "manual")
+        assert not state["running"]
+        assert event(api, 7654322, 1).json()["status"] == "ignored"
+        assert not model.calls and not bridge.sent
+        result = api.post(
+            "/api/automation/start",
+            headers=AUTH,
+            json={
+                "qq_ids": ["7654322"],
+                "prompt": "新的网页规则",
+                "expected_revision": state["revision"],
+            },
+        )
+        assert result.status_code == 200 and result.json()["running"]
+        assert event(api, 7654322, 2).json()["status"] == "accepted"
+        assert "新的网页规则" in model.calls[0][0][0]["content"]
+        assert "只有这位好友用昵称小林。" not in model.calls[0][0][0]["content"]
+
+
+def test_unavailable_group_member_blocks_entire_file_start(tmp_path):
+    cfg = config(tmp_path, prompt_sections=PROMPT_GROUPS)
+    bridge = Bridge(friend_ids=("7654321", "7654322", "7654323"))
+    with TestClient(create_app(bridge_client=bridge, file_config=cfg)) as api:
+        state = status_until(api, "failed")
+        assert not state["running"] and state["selected_ids"] == []
+        assert event(api, 7654321, 1).json()["status"] == "ignored"
 
 
 @pytest.mark.parametrize(

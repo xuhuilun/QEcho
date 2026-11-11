@@ -67,6 +67,21 @@ def create_app(
         if file_config
         else Path(data_dir or os.getenv("QECHO_DATA_DIR", ".data")).resolve()
     )
+    prompt_config = file_config.agent if file_config else None
+    configured_ids = []
+    friend_prompt_profiles = {}
+    if prompt_config:
+        configured_ids = prompt_config.configured_friends
+        group_names = {
+            qq_id: group.name for group in prompt_config.prompt_groups for qq_id in group.friends
+        }
+        friend_prompt_profiles = {
+            qq_id: {
+                "group": group_names.get(qq_id),
+                "has_personal_prompt": qq_id in prompt_config.friend_prompts,
+            }
+            for qq_id in configured_ids
+        }
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -94,10 +109,17 @@ def create_app(
             store = Store(directory / "qecho.sqlite3")
             protect_path(directory / "qecho.sqlite3", 0o600)
             if file_config:
-                store.import_file_settings(file_config.settings_patch())
+                store.import_file_settings(
+                    file_config.settings_patch(),
+                    file_prompt_rules=bool(
+                        file_config.agent.prompt_groups or file_config.agent.friend_prompts
+                    ),
+                )
+            else:
+                store.prepare_web_mode()
             application.state.store = store
             application.state.bridge = bridge
-            engine = Engine(store, model, bridge)
+            engine = Engine(store, model, bridge, prompt_config=prompt_config)
             application.state.engine = engine
             application.state.simple = SimpleService(store, bridge)
             if file_config:
@@ -159,7 +181,8 @@ def create_app(
         return state | {
             "config_source": "file" if file_config else "web",
             "config_file": file_config.source_path.name if file_config else "",
-            "configured_ids": list(file_config.agent.friends) if file_config else [],
+            "configured_ids": configured_ids,
+            "friend_prompt_profiles": friend_prompt_profiles,
             "startup_state": application.state.startup.state if file_config else "manual",
             "startup_error": application.state.startup.error if file_config else "",
         }

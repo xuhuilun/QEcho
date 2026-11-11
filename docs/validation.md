@@ -1,5 +1,11 @@
 # 验证记录
 
+## 提示词分组与好友个人提示词（2026-11-11）
+
+macOS 本机完整回归 326 项通过，1 项平台相关测试跳过。Ruff 检查、JavaScript 语法和样例 TOML 校验通过。[Windows 与 Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42983070200)
+
+模拟消息从文件加载、好友验证、模型请求到模拟发送走通。验证了默认组、同组复用、好友个人补充、组间隔离、名单外忽略、组好友缺失时停止，以及切回网页模式时暂停旧代聊。浏览器以模拟好友核对了组名、专属提示词标记和组名搜索。实际模型遵循提示词的效果与真实 QQ 收发仍需部署后验证。
+
 ## 集中配置与一键启动（2026-11-10）
 
 macOS ARM64 / Python 3.12.13 完整回归为 **305 passed, 1 skipped**，跳过 Windows 专属权限分支。Ruff 检查/格式、JavaScript 语法、启动脚本语法与 Markdown 本地链接检查通过。[功能提交 6607684 的 Windows / Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42812577013)均成功，包含锁定依赖安装、全部测试、真实系统上的启动器调用及静态检查。

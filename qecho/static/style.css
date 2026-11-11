@@ -435,6 +435,11 @@ code {
   display: block;
   line-height: 1.5;
 }
+.friend-copy .friend-prompt-profile {
+  color: var(--green);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
 .friend-row input {
   margin: 0;
   cursor: pointer;
