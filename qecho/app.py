@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import secrets
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -62,6 +63,8 @@ def create_app(
     model_client: ModelClient | None = None,
     bridge_client: BridgeClient | None = None,
     file_config: FileConfig | None = None,
+    *,
+    allow_auto_start: Callable[[], bool] | None = None,
 ) -> FastAPI:
     directory = (
         file_config.data_directory
@@ -128,7 +131,10 @@ def create_app(
             if file_config:
                 startup = ConfiguredAutomation(application.state.simple, file_config)
                 application.state.startup = startup
-                startup.begin()
+                if allow_auto_start is None or allow_auto_start():
+                    startup.begin()
+                else:
+                    startup.stop()
             LOGGER.info(
                 "QEcho ready. Admin token source: %s",
                 "server.admin_token in configuration file"
