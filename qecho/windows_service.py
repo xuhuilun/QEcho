@@ -50,6 +50,7 @@ async def _serve(config, stop, ready, *, port):
                 timeout_graceful_shutdown=30,
             )
         )
+
         async def serve():
             try:
                 await server.serve(sockets=[listener])
