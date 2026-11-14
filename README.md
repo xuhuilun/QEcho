@@ -10,6 +10,10 @@ QEcho 是一个本地运行的 QQ 代聊 Agent。你决定回复哪些好友，�
 
 部署顺序：[准备配置文件](#本地部署) → [安装并连接 NapCat](#napcat-部署与连接) → [一键启动](#3-一键启动)。
 
+## Windows 客户端
+
+Windows x64 客户端提供 EXE 安装包，内置 QEcho 的运行依赖。打开客户端即可编辑配置、启动或停止服务。客户端启动时及运行期间检查正式更新，发现新版本会弹出提示，确认后自动下载安装。NapCat 仍需单独部署并登录。[安装与发布说明](docs/windows-client.md)
+
 ## 本地部署
 
 采用 Python 3.12 + uv 源码运行。Windows / Linux 的依赖安装和自动化测试已通过 CI，macOS 已完成本地验收，具体范围见[验证记录](docs/validation.md)。QQ 登录由外置 NapCat 提供，按其支持的平台安装；一个 QEcho 数据目录对应一个 QQ 账号。

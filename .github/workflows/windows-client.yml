@@ -56,8 +56,9 @@ jobs:
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=QEcho CI Test Only' -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(1)
           $certFile = Join-Path $env:RUNNER_TEMP 'qecho-test-signer.cer'
           Export-Certificate -Cert $cert -FilePath $certFile | Out-Null
-          Import-Certificate -FilePath $certFile -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-          Import-Certificate -FilePath $certFile -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
+          # The host VM is disposable. Machine trust avoids interactive user-root import prompts.
+          Import-Certificate -FilePath $certFile -CertStoreLocation 'Cert:\LocalMachine\Root' -Confirm:$false | Out-Null
+          Import-Certificate -FilePath $certFile -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' -Confirm:$false | Out-Null
           "QECHO_TEST_SIGNER_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify signed in-place upgrade and data persistence
         if: matrix.check == 'signed-upgrade'

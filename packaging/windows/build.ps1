@@ -98,7 +98,9 @@ try {
         $SigningScript = (Resolve-Path -LiteralPath $SigningScript).Path
         $channel = 'release'
     } elseif ($TestSigning) {
-        if (-not $env:QECHO_TEST_SIGNER_THUMBPRINT) { throw 'The isolated CI test signer is missing.' }
+        if ($env:GITHUB_ACTIONS -cne 'true' -or -not $env:QECHO_TEST_SIGNER_THUMBPRINT) {
+            throw 'Test signing requires the isolated GitHub Actions signer.'
+        }
         $SigningScript = Join-Path $PSScriptRoot 'sign-test.ps1'
         $channel = 'test'
     }
