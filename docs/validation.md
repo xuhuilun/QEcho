@@ -1,5 +1,11 @@
 # 验证记录
 
+## Windows 客户端（2026-11-14）
+
+macOS 本机测试 375 项通过，跳过 1 项平台相关用例。Windows x64 运行器验证了 EXE 安装、冻结程序启动、本地 HTTP 服务、控制台静态资源和卸载。另一任务在隔离环境中用同一张临时证书签名两个版本，验证 Authenticode、SHA-256、等待旧进程退出、覆盖安装及版本读取。升级后 TOML 和插入的 SQLite 记录均保留，卸载后仍可访问用户数据。[Windows 安装与升级 CI](https://github.com/xuhuilun/QEcho/actions/runs/43556995865) [Windows 与 Ubuntu 回归](https://github.com/xuhuilun/QEcho/actions/runs/43556995815)
+
+更新查找、下载失败、签名拒绝由模拟测试覆盖。安装器正式发布需要项目的可信代码签名。真实 QQ 对话、正式渠道下发和安装完成后的桌面窗口重开留待正式发布环境验收。
+
 ## 网页提示词即时保存（2026-11-11）
 
 本机完整回归 333 项通过，1 项平台相关测试跳过。Ruff、JavaScript 语法和样例 TOML 校验通过。[Windows 与 Ubuntu CI](https://github.com/xuhuilun/QEcho/actions/runs/42986129245)
