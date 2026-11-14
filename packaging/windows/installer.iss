@@ -31,7 +31,6 @@ SignedUninstaller=yes
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
-Name: "zh_CN"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -49,7 +48,6 @@ Filename: "{app}\QEcho.exe"; WorkingDir: "{app}"; Parameters: "--after-update"; 
 
 [CustomMessages]
 en.WaitForQEcho=QEcho is still closing. Close QEcho and run the update again.
-zh_CN.WaitForQEcho=QEcho 仍在退出。请关闭 QEcho 后重试更新。
 
 [Code]
 const
@@ -57,11 +55,12 @@ const
   WaitObject0 = 0;
   ErrorInvalidParameter = 87;
 
-function OpenProcess(Access: LongWord; InheritHandle: LongBool; ProcessId: LongWord): THandle;
+{ Inno Setup's default compiler generates a 32-bit Setup even for an x64 payload. }
+function OpenProcess(Access: LongWord; InheritHandle: LongBool; ProcessId: LongWord): LongWord;
   external 'OpenProcess@kernel32.dll stdcall';
-function WaitForSingleObject(Handle: THandle; Milliseconds: LongWord): LongWord;
+function WaitForSingleObject(Handle: LongWord; Milliseconds: LongWord): LongWord;
   external 'WaitForSingleObject@kernel32.dll stdcall';
-function CloseHandle(Handle: THandle): LongBool;
+function CloseHandle(Handle: LongWord): LongBool;
   external 'CloseHandle@kernel32.dll stdcall';
 
 function HasSwitch(Switch: String): Boolean;
@@ -109,7 +108,7 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ProcessId: Integer;
-  ProcessHandle: THandle;
+  ProcessHandle: LongWord;
 begin
   Result := '';
   if not IsClientUpdate then
